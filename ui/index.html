@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="sun">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone Control Panel</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <h1>🚁 Drone Control Panel</h1>
+                <div class="header-right">
+                    <div class="status-indicator" id="api-status" data-state="connecting" title="API connection status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Connecting…</span>
+                    </div>
+                    <button class="theme-toggle" id="theme-toggle" title="Toggle sunlight / night mode" aria-label="Toggle theme">
+                        <span class="theme-toggle-icon">☀️</span>
+                        <span class="theme-toggle-label">Sun</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <nav class="mode-tabs" role="tablist" aria-label="Drone modes">
+            <button class="mode-tab active" role="tab" aria-selected="true" aria-controls="mode-mission-one" id="tab-mission-one" data-tab="mission-one">Mission One</button>
+            <button class="mode-tab" role="tab" aria-selected="false" aria-controls="mode-mission-two" id="tab-mission-two" data-tab="mission-two">Mission Two</button>
+            <button class="mode-tab" role="tab" aria-selected="false" aria-controls="mode-captures" id="tab-captures" data-tab="captures">Captures</button>
+        </nav>
+
+        <div class="mode-panel active" id="mode-mission-one" role="tabpanel" aria-labelledby="tab-mission-one">
+            <main class="main-content">
+                <div class="screens-grid">
+                    <section class="screen" id="depth-camera">
+                        <div class="screen-header">
+                            <h2>Intel Depth Camera</h2>
+                            <div class="screen-info">
+                                <div class="view-toggle" role="group" aria-label="Camera view">
+                                    <button type="button" class="view-toggle-btn active" id="depth-view-depth" data-view="depth" aria-pressed="true">Depth</button>
+                                    <button type="button" class="view-toggle-btn" id="depth-view-rgb" data-view="rgb" aria-pressed="false">RGB</button>
+                                    <button type="button" class="view-toggle-btn" id="depth-view-circles" data-view="circles" aria-pressed="false">Object Detection</button>
+                                </div>
+                                <span class="info-badge" id="depth-stream-status" data-state="connecting">Connecting…</span>
+                            </div>
+                        </div>
+                        <div class="camera-container">
+                            <div class="camera-feed live-feed">
+                                <video id="depth-camera-stream" class="live-camera-stream" autoplay muted playsinline></video>
+                                <canvas id="od-overlay" class="od-overlay"></canvas>
+
+                                <div class="stream-overlay" id="depth-camera-overlay">
+                                    <div class="placeholder-text">Depth WebRTC Stream</div>
+                                    <div class="placeholder-subtext">Waiting for MediaMTX…</div>
+                                </div>
+
+                                <div class="distance-overlay" id="depth-distance-overlay" data-state="invalid">
+                                    Distance: waiting for depth data…
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="screen" id="front-camera">
+                        <div class="screen-header">
+                            <h2>Front Camera</h2>
+                            <div class="screen-info">
+                                <span class="info-badge" id="front-stream-status" data-state="connecting">Connecting…</span>
+                            </div>
+                        </div>
+                        <div class="camera-container">
+                            <div class="camera-feed live-feed">
+                                <video id="front-camera-stream" class="live-camera-stream" autoplay muted playsinline></video>
+
+                                <div class="stream-overlay" id="front-camera-overlay">
+                                    <div class="placeholder-text">Front WebRTC Stream</div>
+                                    <div class="placeholder-subtext">Waiting for MediaMTX…</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </main>
+
+            <footer class="control-panel">
+                <div class="control-buttons">
+                    <button class="control-btn screenshot-btn" id="screenshot-btn" title="Capture screenshot (Ctrl+S)">
+                        <span class="btn-icon">📸</span>
+                        <span class="btn-text">Screenshot</span>
+                        <span class="btn-shortcut"><kbd>Ctrl</kbd>+<kbd>S</kbd></span>
+                    </button>
+
+                    <button class="control-btn small-payload-btn" id="small-payload-btn" title="Release small payload">
+                        <span class="btn-icon">📦</span>
+                        <span class="btn-text">Small Payload</span>
+                        <span class="btn-shortcut">Actuator 4</span>
+                    </button>
+
+                    <button class="control-btn release-payload-btn" id="release-payload-btn" title="Release main payload (Ctrl+P)">
+                        <span class="btn-icon">📦</span>
+                        <span class="btn-text">Release Payload</span>
+                        <span class="btn-shortcut"><kbd>Ctrl</kbd>+<kbd>P</kbd></span>
+                    </button>
+
+                    <button class="control-btn spray-water-btn" id="spray-water-btn" title="Hold to spray water (Ctrl+W)">
+                        <span class="btn-icon">💧</span>
+                        <span class="btn-text">Spray Water</span>
+                        <span class="btn-shortcut">Hold · <kbd>Ctrl</kbd>+<kbd>W</kbd></span>
+                    </button>
+                </div>
+            </footer>
+        </div>
+
+        <div class="mode-panel" id="mode-mission-two" role="tabpanel" aria-labelledby="tab-mission-two" hidden>
+            <main class="main-content">
+                <div class="mode-placeholder">
+                    <h2>Mission Two</h2>
+                    <p>Coming soon.</p>
+                </div>
+            </main>
+        </div>
+
+        <!-- Captures Mode: browse saved screenshots, measure depth, edit notes -->
+        <div class="mode-panel" id="mode-captures" role="tabpanel" aria-labelledby="tab-captures" hidden>
+            <main class="main-content captures-layout">
+                <section class="captures-gallery">
+                    <div class="captures-toolbar">
+                        <h2>Captures</h2>
+                        <button class="control-btn" id="captures-refresh" title="Reload the list">↻ Refresh</button>
+                    </div>
+                    <div class="captures-grid" id="captures-grid">
+                        <div class="captures-empty" id="captures-empty">No captures yet — take a screenshot in Mission One.</div>
+                    </div>
+                </section>
+
+                <section class="capture-detail" id="capture-detail" hidden>
+                    <div class="screen-header">
+                        <h2 id="capture-detail-title">Capture</h2>
+                        <div class="view-toggle" role="group" aria-label="Capture view">
+                            <button type="button" class="view-toggle-btn active" data-cap-view="rgb" aria-pressed="true">RGB</button>
+                            <button type="button" class="view-toggle-btn" data-cap-view="depth" aria-pressed="false">Depth</button>
+                            <button type="button" class="view-toggle-btn" data-cap-view="od" aria-pressed="false">Object Detection</button>
+                        </div>
+                    </div>
+                    <div class="capture-detail-body">
+                        <div class="capture-image-wrap">
+                            <img id="capture-detail-img" alt="Selected capture">
+                        </div>
+                        <div class="capture-side">
+                            <button class="control-btn" id="capture-measure-btn" title="Click two points to estimate distance">📏 Measure distance / depth</button>
+                            <label class="capture-notes-label" for="capture-notes">Details / notes (notes.txt)</label>
+                            <textarea id="capture-notes" class="capture-notes" placeholder="Notes for this capture — saved to notes.txt in the capture folder…"></textarea>
+                            <div class="capture-notes-actions">
+                                <button class="control-btn" id="capture-notes-save">💾 Save notes</button>
+                                <span class="capture-notes-status" id="capture-notes-status"></span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <!-- Measure modal: click two points on a captured frame to estimate distance -->
+        <div id="measure-modal" class="measure-modal" hidden>
+            <div class="measure-dialog" role="dialog" aria-modal="true" aria-label="Measure distance">
+                <div class="measure-header">
+                    <span class="measure-title">📏 Measure distance</span>
+                    <span class="measure-hint" id="measure-hint">Click two points on the image</span>
+                    <button class="measure-close" id="measure-close" title="Close (Esc)" aria-label="Close">✕</button>
+                </div>
+                <div class="measure-stage" id="measure-stage">
+                    <img id="measure-img" alt="Captured frame">
+                    <canvas id="measure-canvas"></canvas>
+                </div>
+                <div class="measure-footer">
+                    <span class="measure-readout" id="measure-readout">Click two points to measure…</span>
+                    <button class="control-btn" id="measure-reset">Reset points</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toast-container" class="toast-container" aria-live="polite"></div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
