@@ -4,28 +4,18 @@ drone-2027 talks to PX4 through the Micro XRCE-DDS Agent, not MAVROS. Everything
 below is set once in QGroundControl (QGC). The code can no longer read or write PX4
 parameters, so this checklist replaces what drone-2026 did from code.
 
-Values were checked against PX4 **v1.16**. If the flight controller runs a newer
+Values were checked against PX4 **v1.17**. If the flight controller runs a newer
 release, repeat step 0 for that version.
 
 ## 0. Confirm what the drone actually has (do this first)
 
-Two facts are not confirmed yet:
+1. **Exact firmware version.** Confirmed: **PX4 v1.17.0**.
+   `src/px4_msgs` is pinned to `release/1.17`.
 
-1. **Exact firmware version.** QGC → Vehicle Setup → Summary, or `ver all` in the
-   MAVLink console.
-   `src/px4_msgs` is pinned to `release/1.16`. If the drone runs another release,
-   point the submodule at it and rebuild:
-
-   ```sh
-   git -C src/px4_msgs fetch --depth 1 origin release/1.17
-   git -C src/px4_msgs checkout FETCH_HEAD
-   # and change `branch =` in .gitmodules to match
-   colcon build --symlink-install
-   ```
-
-   Topic names are built from each message's `MESSAGE_VERSION`, so the code should
-   not need changes. The command numbers in `src/drone/drone/px4/modes.py` are checked
-   against px4_msgs at startup and a warning is printed if they differ.
+   Topic names are built dynamically from each message's `MESSAGE_VERSION`, so
+   topics like `VehicleLocalPosition` automatically use `_v1` as required by 1.17.
+   The command numbers in `src/drone/drone/px4/modes.py` are checked against
+   px4_msgs at startup and a warning is printed if they differ.
 
 2. **How the Jetson is wired to the flight controller.** drone-2026 was
    inconsistent: `api_server.py` used Ethernet (`192.168.144.11`) while the test

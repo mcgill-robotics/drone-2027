@@ -5,10 +5,10 @@ macOS is not a practical host for PX4 SITL with Gazebo.
 
 ## One-time setup
 
-1. PX4-Autopilot at the same release as `src/px4_msgs` (currently 1.16):
+1. PX4-Autopilot at the same release as `src/px4_msgs` (currently 1.17):
 
    ```sh
-   git clone --recursive -b release/1.16 https://github.com/PX4/PX4-Autopilot.git ~/PX4-Autopilot
+   git clone --recursive -b release/1.17 https://github.com/PX4/PX4-Autopilot.git ~/PX4-Autopilot
    bash ~/PX4-Autopilot/Tools/setup/ubuntu.sh
    ```
 
