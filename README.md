@@ -10,15 +10,24 @@ topics under `/fmu/out` and `/fmu/in` with `px4_msgs` types. MAVROS is gone.
 > and whether the Jetson reaches the flight controller over serial or Ethernet are not
 > confirmed yet.
 
+## Documentation
+
+- **[System Architecture & Deep-Dive](docs/architecture.md):** Full system architecture diagram, uXRCE-DDS bridge details, data flow pipelines, and component breakdown.
+- **[Flight Checks Operations Manual](src/drone/drone/flight_checks/README.md):** Detailed guide for the 9-step testing ladder, pre-flight safety gates, and troubleshooting.
+- **[PX4 Hardware Setup](docs/px4_setup.md):** Wiring, serial UART vs. Ethernet UDP, and QGroundControl parameter setup.
+- **[Simulation (SITL)](docs/sitl.md):** Quickstart guide for running PX4 in Gazebo simulation.
+- **[Arming Safety](docs/arming.md):** Safety interlocks, RC arm switch rules, and software `--api` restrictions.
+- **[Actuator Mapping](docs/actuators.md):** PX4 Actuator Sets 1–6 mapping for payloads and sprayers.
+
 ## Layout
 
 ```
-docs/                     px4_setup.md, arming.md, actuators.md, sitl.md
+docs/                     architecture.md, px4_setup.md, arming.md, actuators.md, sitl.md
 docker/Dockerfile         ROS 2 Humble + Micro-XRCE-DDS-Agent
 src/px4_msgs/             PX4 message definitions (git submodule, pinned to firmware release/1.17)
 src/drone/                ROS 2 package with the core flight engine
   drone/px4/              PX4 interface: telemetry, commands, offboard, frames, agent
-  drone/flight_checks/    The 9-step testing ladder (check_link -> check_lap)
+  drone/flight_checks/    The 9-step testing ladder (check_link -> check_lap, README.md)
   launch/                 agent.launch.py
   test/                   Pure logic unit tests (no ROS needed)
 ```
