@@ -4,8 +4,8 @@
   <name>drone</name>
   <version>0.1.0</version>
   <description>
-    McGill Robotics drone companion-computer code: PX4 interface over uXRCE-DDS,
-    flight checks, Mission 1, API server, target detection and obstacle avoidance.
+    McGill Robotics drone companion-computer code: PX4 flight interface over uXRCE-DDS
+    and step-by-step flight checks ladder.
   </description>
   <!-- TODO: replace with the team's maintainer contact and chosen license. -->
   <maintainer email="drone-team@example.com">McGill Robotics Drone Team</maintainer>
@@ -13,17 +13,8 @@
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>px4_msgs</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-
-  <exec_depend>python3-numpy</exec_depend>
-  <exec_depend>python3-opencv</exec_depend>
-  <exec_depend>python3-yaml</exec_depend>
-  <exec_depend>python3-flask</exec_depend>
-  <exec_depend>python3-shapely</exec_depend>
-  <exec_depend>python3-scipy</exec_depend>
-  <exec_depend>python3-serial</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 

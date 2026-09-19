@@ -14,21 +14,13 @@ topics under `/fmu/out` and `/fmu/in` with `px4_msgs` types. MAVROS is gone.
 
 ```
 docs/                     px4_setup.md, arming.md, actuators.md, sitl.md
-ui/                       browser control panel (talks to api_server on port 5000)
-config/mediamtx.yml       camera streaming config
-missions/mission1/        lap points, coverage area and progress (read and written by Mission 1)
 docker/Dockerfile         ROS 2 Humble + Micro-XRCE-DDS-Agent
-src/px4_msgs/             PX4 message definitions (git submodule, pinned to the firmware release)
-src/drone/                ROS 2 package with all our code
+src/px4_msgs/             PX4 message definitions (git submodule, pinned to firmware release/1.17)
+src/drone/                ROS 2 package with the core flight engine
   drone/px4/              PX4 interface: telemetry, commands, offboard, frames, agent
-  drone/flight_checks/    check_link, check_telemetry, check_offboard, check_arm, check_hover, ...
-  drone/mission1/         Mission 1 runner: laps, boustrophedon coverage, return
-  drone/pathing/          lap TSP and coverage planners
-  drone/api/              API server, target georeferencing, target registry
-  drone/detection/        wet/dry target detector
-  drone/avoidance/        obstacle avoidance node and core
-  launch/                 agent.launch.py, oa_gazebo.launch.py
-  test/                   unit tests (no ROS needed)
+  drone/flight_checks/    The 9-step testing ladder (check_link -> check_lap)
+  launch/                 agent.launch.py
+  test/                   Pure logic unit tests (no ROS needed)
 ```
 
 ## Requirements (Jetson or Ubuntu 22.04)
@@ -42,17 +34,12 @@ src/drone/                ROS 2 package with all our code
   cmake .. && make && sudo make install && sudo ldconfig /usr/local/lib/
   ```
 
-- On the Jetson, `pyrealsense2` for the depth camera (build librealsense with Python bindings).
-- MediaMTX for camera streaming (see below).
-
 ## Build
 
 ```sh
 git clone --recurse-submodules git@github.com:mcgill-robotics/drone-2027.git
 cd drone-2027
 source /opt/ros/humble/setup.bash
-rosdep install --from-paths src --ignore-src -y
-sudo apt install python3-flask-cors
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -60,51 +47,39 @@ source install/setup.bash
 `--symlink-install` means Python edits take effect without rebuilding. Rebuild after
 adding files, entry points or launch files.
 
-## Run
+## Flight Checks Ladder
 
-Every tool takes a link flag: `--sitl`, `--serial [DEVICE]` or `--udp [PORT]`, and
+Every check takes a link flag: `--sitl`, `--serial [DEVICE]` or `--udp [PORT]`, and
 starts the agent itself unless `--no-agent` is given.
 
-| What | Command |
-| --- | --- |
-| Is PX4 reachable? | `ros2 run drone check_link --sitl` |
-| Print telemetry | `ros2 run drone check_telemetry --sitl` |
-| OFFBOARD without arming | `ros2 run drone check_offboard --sitl` |
-| Hover test | `ros2 run drone check_hover --sitl --api` |
-| Mission 1 | `ros2 run drone mission1 --sitl --api-arm` (drone: `--serial` or `--udp`, pilot arms) |
-| Control panel backend | `ros2 run drone api_server --sitl`, then open `ui/index.html` |
-| Obstacle avoidance (Gazebo) | `ros2 launch drone oa_gazebo.launch.py` |
+Run the checks in numerical order from Step 1 to Step 9:
 
-`--api` / `--api-arm` arm from code and are refused without `--sitl`: on the real
-drone the pilot arms with the RC switch (`docs/arming.md`).
+| Step | Script | Purpose | Arming / Motors |
+| :--- | :--- | :--- | :--- |
+| **1** | `ros2 run drone check_link --sitl` | Verifies MicroXRCEAgent & PX4 FMU bridge connection | Zero risk (Motors off) |
+| **2** | `ros2 run drone check_telemetry --sitl` | Validates sensor health, GPS fix, EKF state, battery | Zero risk (Motors off) |
+| **3** | `ros2 run drone check_setpoints --sitl` | Tests ENU $\leftrightarrow$ NED setpoint coordinate calculations | Zero risk (Dry-run math) |
+| **4** | `ros2 run drone check_offboard --sitl` | Tests 10 Hz OFFBOARD heartbeat handshake with PX4 | Zero risk (Motors disarmed) |
+| **5** | `ros2 run drone check_arm --sitl --api` | Tests arming/disarming interlock | Low risk (Props removed!) |
+| **6** | `ros2 run drone check_hover --sitl --api --altitude 3` | Arms, takes off to 3m, hovers rock-steady, lands | First flight test |
+| **7** | `ros2 run drone check_goto_gps --sitl --api` | Commands navigation to a GPS waypoint and holds | Position navigation |
+| **8** | `ros2 run drone check_gps_movement --sitl --api` | Flies sequential GPS path waypoints | Trajectory tracking |
+| **9** | `ros2 run drone check_lap --sitl --api` | Executes full perimeter lap and Return-to-Launch | Complete flight loop |
 
-Simulator setup: `docs/sitl.md`. Drone setup: `docs/px4_setup.md`.
+`--api` arms from code and is strictly refused without `--sitl`: on the real
+drone the safety pilot arms exclusively with the physical RC transmitter switch (`docs/arming.md`).
+
+Simulator setup: `docs/sitl.md`. Drone hardware setup: `docs/px4_setup.md`.
 
 ## Coordinate frames
 
-All mission code works in **ENU** (x East, y North, z Up), as it did with MAVROS.
-PX4's topics are NED; the only conversion is in `src/drone/drone/px4/frames.py`.
+All high-level code works in **ENU** (x East, y North, z Up), as standard in robotics.
+PX4's internal topics work in aviation **NED** (North, East, Down). Conversions are
+strictly isolated to `src/drone/drone/px4/frames.py` and `setpoints.py`.
 
-## Tests and formatting
-
-```sh
-pip install pytest pyyaml
-pytest                         # ROS-free unit tests, also run in CI
-pre-commit run --all-files     # ruff format
-```
-
-## Camera feed
-
-The Intel RealSense depth camera is streamed over WebRTC via MediaMTX. `api_server`
-starts MediaMTX and the ffmpeg publishers automatically. The MediaMTX binary is not
-committed; download the arm64 build into the repo root (or put it on `PATH`):
+## Tests
 
 ```sh
-wget https://github.com/bluenviron/mediamtx/releases/download/v1.18.2/mediamtx_v1.18.2_linux_arm64v8.tar.gz
-tar -xzf mediamtx_v1.18.2_linux_arm64v8.tar.gz mediamtx
-rm mediamtx_v1.18.2_linux_arm64v8.tar.gz
+pip install pytest
+pytest                         # ROS-free unit tests
 ```
-
-`config/mediamtx.yml` configures the `depth`, `rgb` and `front_clean` streams.
-Screenshots, the target registry and the MediaMTX log are written to `runtime/`
-(override with `DRONE_RUNTIME_DIR`).
