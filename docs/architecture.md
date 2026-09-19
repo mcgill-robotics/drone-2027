@@ -4,11 +4,9 @@ This document details the software and hardware architecture of `drone-2027`. It
 
 ---
 
-## 1. System Architecture Overview
+## 1. System Architecture Flowchart
 
-The diagram below expands on the official PX4 uXRCE-DDS architecture, showing the linear flow from hardware flight sensors, through the serial/UDP transport and DDS bridge, into our ROS 2 flight engine, and up to the 9-step flight verification ladder:
-
-### System Architecture Flowchart
+The flowchart below traces the linear pipeline from hardware sensors on the Pixhawk, across the transport link and DDS bridge, into our ROS 2 flight engine, and up to the 9-step testing ladder:
 
 ```mermaid
 flowchart TD
@@ -47,7 +45,7 @@ flowchart TD
     subgraph STAGE5["5. Core Flight Engine (src/drone/drone/px4/)"]
         PX4_IFACE["PX4Interface (interface.py)<br/>• Public Python API gateway<br/>• Runs ONE dedicated background executor spin() thread"]
         
-        TEL["telemetry.py<br/>Subscribes to /fmu/out/*<br/>Caches thread-safe ENU state"]
+        TEL["telemetry.py<br/>Reads /fmu/out/*<br/>Caches thread-safe ENU state"]
         CMD["commands.py<br/>Publishes to /fmu/in/vehicle_command<br/>Synchronous wait on vehicle_command_ack"]
         OFF["offboard.py<br/>10 Hz Background Timer Thread<br/>Streams heartbeat & setpoints"]
         
@@ -74,149 +72,140 @@ flowchart TD
 
 ---
 
-## 2. ASCII Architecture & File Responsibility Directory
+## 2. ASCII System Architecture Blueprint
 
-This section details **exactly what each file in the repository takes care of**, what topics it interacts with, and what functions it provides.
+This diagram shows the complete hardware and software topology, highlighting **which file takes care of what** across each layer of the stack:
 
 ```text
-========================================================================================================================
-                                    STAGE 1: PX4 AUTOPILOT (FIRMWARE v1.17.0)
-  Runs on Pixhawk FMUv6X microcontroller (Hardware) OR px4_sitl process (Gazebo Simulation)
-  Coordinates: Aviation NED (North-East-Down, -Z is Up) | Internal Bus: uORB
-========================================================================================================================
-   [Flight Sensors & EKF2]              [Commander & Flight Modes]             [Flight Task Offboard]
-   • GPS, IMU, Barometer, Mag           • Arming safety interlocks             • Trajectory tracking
-   • Calculates metric position         • POSCTL, AUTO.LOITER, RTL             • Velocity & position PIDs
-              │                                      ▲                                    ▲
-              ▼                                      │                                    │
-   Outbound uORB Topics:               Inbound uORB Topic:                   Inbound uORB Topics:
-   • vehicle_status_v1                 • vehicle_command                     • trajectory_setpoint
-   • vehicle_local_position_v1           (VehicleCommand 187, 176, etc.)     • offboard_control_mode
-   • battery_status                                                            (Must stream at >= 2 Hz)
-   • vehicle_command_ack
-              │                                      ▲                                    ▲
-              └──────────────────────────────┬───────┴────────────────────────────────────┘
-                                             ▼
-                             ┌──────────────────────────────┐
-                             │    uXRCE-DDS Client (PX4)    │
-                             │ Encodes uORB structs to CDR  │
-                             └──────────────┬───────────────┘
-============================================│===========================================================================
-                               STAGE 2: PHYSICAL TRANSPORT LAYER
-   • Hardware Link: Serial UART cable (/dev/ttyTHS1 @ 921,600 baud) or Ethernet UDP
-   • Simulation Link: UDP localhost:8888 (Gazebo / PC)
-============================================│===========================================================================
-                                            ▼
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                            STAGE 3: COMPANION COMPUTER (NVIDIA JETSON / LINUX)                                       │
-│                                                                                                                      │
-│ ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ FILE: src/drone/drone/px4/agent.py                                                                               │ │
-│ │ RESPONSIBILITY: Subprocess lifecycle manager for the external Micro-XRCE-DDS-Agent C++ binary.                   │ │
-│ │ • Spawns: `MicroXRCEAgent serial --dev /dev/ttyTHS1 -b 921600` OR `MicroXRCEAgent udp4 -p 8888`                  │ │
-│ │ • Parses CLI flags: `--sitl`, `--serial [DEV]`, `--baud [BAUD]`, `--udp [PORT]`, `--no-agent`                    │ │
-│ │ • Exposes: add_link_args(parser), start_agent_from_args(args), stop_agent()                                      │ │
-│ └──────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────┘ │
-│                                                            ▼                                                         │
-│ ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ ROS 2 DDS MIDDLEWARE (Fast-DDS & px4_msgs release/1.17 submodule)                                                │ │
-│ │                                                                                                                  │ │
-│ │ ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │ │
-│ │ │ FILE: src/drone/drone/px4/qos.py                                                                             │ │ │
-│ │ │ RESPONSIBILITY: Defines the DDS delivery contract (PX4_QOS).                                                 │ │ │
-│ │ │ • Policy: BEST_EFFORT + TRANSIENT_LOCAL + KEEP_LAST (depth=1).                                               │ │ │
-│ │ │ • Why: Matches PX4 sensor streams; prevents silent subscriber drops caused by ROS 2 default RELIABLE policy.│ │ │
-│ │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │ │
-│ │ ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │ │
-│ │ │ FILE: src/drone/drone/px4/topics.py                                                                          │ │ │
-│ │ │ RESPONSIBILITY: Resolves dynamic topic names based on px4_msgs MESSAGE_VERSION attributes.                   │ │ │
-│ │ │ • Why: PX4 1.17 bumped VehicleLocalPosition version to 1, publishing on /fmu/out/vehicle_local_position_v1.   │ │ │
-│ │ │ • Exposes: in_topic(msg_type, name), out_topic(msg_type, name)                                               │ │ │
-│ │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │ │
-│ └────────────────────────────┬────────────────────────────────────────────────────────▲──────────────────────────────┘ │
-│                              │                                                        │                              │
-│                              ▼ Inbound: /fmu/out/*                                    │ Outbound: /fmu/in/*          │
-│ ═════════════════════════════╪════════════════════════════════════════════════════════╪═════════════════════════════ │
-│                              │         STAGE 4: OUR CORE FLIGHT ENGINE                │                              │
-│                              │              (src/drone/drone/px4/)                    │                              │
-│                              │                                                        │                              │
-│ ┌────────────────────────────┴────────────────────────────────────────────────────────┴─────────────────────────────┐ │
-│ │ FILE: src/drone/drone/px4/interface.py                                                                            │ │
-│ │ RESPONSIBILITY: The central API gateway class (PX4Interface) and single-threaded execution manager.                │ │
-│ │ • Inherits from: rclpy.node.Node, TelemetryMixin, CommandsMixin, OffboardMixin                                    │ │
-│ │ • The 2026 Threading Fix: Spawns EXACTLY ONE background daemon thread running SingleThreadedExecutor.spin(self). │ │
-│ │   Guarantees no multi-threading race condition crashes in ROS 2; getters return cached state immediately.         │ │
-│ │ • Exposes: init_px4(connect_timeout), shutdown_px4()                                                              │ │
-│ └──────┬───────────────────────────────────────────┬───────────────────────────────────────────┬────────────────────┘ │
-│        │                                           │                                           │                      │
-│        ▼                                           ▼                                           ▼                      │
-│ ┌───────────────────────────────┐ ┌─────────────────────────────────┐ ┌─────────────────────────────────────────────┐ │
-│ │ FILE: px4/telemetry.py        │ │ FILE: px4/commands.py           │ │ FILE: px4/offboard.py                       │ │
-│ │ RESPONSIBILITY: Inbound       │ │ RESPONSIBILITY: Outbound        │ │ RESPONSIBILITY: 10 Hz Dead-man's            │ │
-│ │ sensor subscriptions & state  │ │ vehicle command & ack execution.│ │ heartbeat and setpoint streaming.           │ │
-│ │ caching.                      │ │                                 │ │                                             │ │
-│ │ • Reads:                      │ │ • Writes:                       │ │ • Writes (10 Hz Background Timer):          │ │
-│ │   /fmu/out/vehicle_status_v1  │ │   /fmu/in/vehicle_command       │ │   /fmu/in/offboard_control_mode             │ │
-│ │   /fmu/out/vehicle_local_pos  │ │ • Reads:                        │ │   /fmu/in/trajectory_setpoint               │ │
-│ │   /fmu/out/battery_status     │ │   /fmu/out/vehicle_command_ack  │ │ • Methods:                                  │ │
-│ │   /fmu/out/vehicle_global_pos │ │ • Handshake: Blocks caller on   │ │   start_offboard_stream_background()        │ │
-│ │ • Exposes Getters:            │ │   unique threading.Event until  │ │   stop_offboard_stream_background()         │ │
-│ │   get_location()              │ │   PX4 accepts the command.      │ │   start_offboard()                          │ │
-│ │   get_velocity()              │ │ • Methods:                      │ │   send_position_setpoint(x, y, z, yaw)      │ │
-│ │   get_battery_status()        │ │   arm_vehicle(timeout)          │ │   send_velocity_setpoint(vx, vy, vz, yaw)   │ │
-│ │   get_gps_location()          │ │   disarm_vehicle()              │ │   hold_current_position()                   │ │
-│ │   is_armed(), get_mode()      │ │   takeoff(altitude), land()     │ │ • Failsafe: Prevents COM_OF_LOSS_T timeout  │ │
-│ │   print_telemetry_health()    │ │   change_mode("RTL"), etc.      │ │   (which causes PX4 to drop to LOITER).     │ │
-│ └──────────────┬────────────────┘ └────────────────┬────────────────┘ └──────────────────────┬──────────────────────┘ │
-│                │                                   │                                         │                        │
-│                ▼                                   ▼                                         ▼                        │
-│ ┌───────────────────────────────┐ ┌─────────────────────────────────┐ ┌─────────────────────────────────────────────┐ │
-│ │ FILE: px4/convert.py          │ │ FILE: px4/modes.py              │ │ FILE: px4/setpoints.py                      │ │
-│ │ RESPONSIBILITY: Unpacks raw   │ │ RESPONSIBILITY: Translates mode │ │ RESPONSIBILITY: Constructs raw              │ │
-│ │ PX4 structs into clean dicts. │ │ names and command integers.     │ │ TrajectorySetpoint message fields.          │ │
-│ │ • Checks xy_valid, z_valid.   │ │ • Translates "OFFBOARD", "RTL", │ │ • Performs NaN-masking for unconstrained    │ │
-│ │ • Decodes GPS fix types.      │ │   "AUTO.LOITER", "LAND".        │ │   axes (e.g. pure horizontal velocity).     │ │
-│ └──────────────┬────────────────┘ │ • Verifies MAV_CMD IDs at boot. │ └──────────────────────┬──────────────────────┘ │
-│                │                  └────────────────┬────────────────┘                        │                        │
-│                ▼                                   ▼                                         ▼                        │
-│ ┌───────────────────────────────┐ ┌─────────────────────────────────┐ ┌─────────────────────────────────────────────┐ │
-│ │ FILE: px4/frames.py           │ │ FILE: px4/actuators.py          │ │ (Uses frames.py for ENU -> NED conversion)  │ │
-│ │ RESPONSIBILITY: Pure math for │ │ RESPONSIBILITY: Maps Actuator   │ └─────────────────────────────────────────────┘ │
-│ │ coordinate conversions.       │ │ Sets 1–6 (MAV_CMD 187).         │                                                 │
-│ │ • NED ⟷ ENU position math     │ │ • Replaces old DO_SET_SERVO.    │                                                 │
-│ │ • Quaternion ⟷ Euler angles   │ │ • Clamps -1.0 to +1.0 PWM inputs│                                                 │
-│ │ • Heading yaw wrapping        │ │   for sprayers and payload drop.│                                                 │
-│ └───────────────────────────────┘ └─────────────────────────────────┘                                                 │
-└────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────┘
-                                                 │
-                                                 ▼
-=========================================================================================================================
-                               STAGE 5: THE 9-STEP VERIFICATION LADDER
-                                     (src/drone/drone/flight_checks/)
-=========================================================================================================================
- ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ FILE: flight_checks/common.py                                                                                       │
- │ RESPONSIBILITY: Shared CLI argument parsing, PX4 connection initialization, safe arming logic, and clean shutdown. │
- │ • build_parser(): Configures link flags and safety parameters (--api, --sitl, --serial, --baud, --udp).            │
- │ • connect(args): Starts MicroXRCEAgent, initializes PX4Interface, and confirms topic reception.                     │
- │ • arm(px4, args): Enforces safety: requires physical RC switch on real drone; permits code arming only with --sitl.│
- │ • run_main(check_fn, args): Wraps checks in try/finally to guarantee agent shutdown and ROS node destruction.      │
- └───────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────┘
-                                                     │
-        ┌────────────────────────────────────────────┴────────────────────────────────────────────┐
-        │                                                                                         │
-        ▼                                                                                         ▼
- [BENCH CHECKS: Steps 1–5]                                                                 [FLIGHT CHECKS: Steps 6–9]
- 1. check_link.py:          Bridge health (counts publishers)                              6. check_hover.py:        Takeoff to 3m, 10s hover, land
- 2. check_telemetry.py:     Sensor verification (GPS, EKF, battery)                        7. check_goto_gps.py:     Fly to single GPS coordinate
- 3. check_setpoints.py:     Math sanity test (dry-run setpoints)                           8. check_gps_movement.py: Sequential waypoints + yaw
- 4. check_offboard.py:      10 Hz heartbeat handshake verification                         9. check_lap.py:          Full perimeter lap + RTL
- 5. check_arm.py:           Motor interlock test (PROPS OFF!)
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   PX4 AUTOPILOT                                        │
+│  (Pixhawk FMUv6X hardware running PX4 v1.17.0 firmware OR px4_sitl in Gazebo)          │
+│                                                                                        │
+│  uORB Topics (Aviation NED coordinates):                                              │
+│    OUTBOUND (Sensors & State):                 INBOUND (Commands & Setpoints):         │
+│    • vehicle_status / vehicle_status_v1        • vehicle_command                       │
+│    • vehicle_local_position_v1                 • offboard_control_mode                 │
+│    • vehicle_global_position                   • trajectory_setpoint                   │
+│    • battery_status                                                                    │
+│    • vehicle_command_ack                                                               │
+│                           ▲                              │                             │
+│                           │                              ▼                             │
+│  ┌──────────────────────────────────────────────────────────────┐                      │
+│  │                    uXRCE-DDS Client (PX4)                    │                      │
+│  │   Serializes uORB structs to CDR byte streams over link      │                      │
+│  └──────────────────────────────────────────────────────────────┘                      │
+└─────────────────────────────────┬──────────────────────────────────────────────────────┘
+                                  │
+                   Physical Transport Layer
+       Hardware: Serial UART (/dev/ttyTHS1 @ 921600 baud) or Ethernet UDP
+       Simulation (SITL): UDP 127.0.0.1:8888
+                                  │
+┌─────────────────────────────────▼──────────────────────────────────────────────────────┐
+│                  COMPANION COMPUTER (NVIDIA Jetson / Linux Workstation)                │
+│                                                                                        │
+│  ┌──────────────────────────────────────────────────────────────┐                      │
+│  │ Micro-XRCE-DDS-Agent (v2.4.2 C++ Daemon)                     │                      │
+│  │ Managed by: agent.py  [Starts/stops bridge subprocess]       │                      │
+│  └──────────────────────────────┬───────────────────────────────┘                      │
+│                                 │ Fast-DDS Middleware                                  │
+│                                 ▼                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐                      │
+│  │ ROS 2 Middleware (px4_msgs release/1.17 submodule)           │                      │
+│  │ Configured by: qos.py     [PX4_QOS: BEST_EFFORT delivery]    │                      │
+│  │ Topic names by: topics.py [Resolves _v1 suffix in 1.17]      │                      │
+│  └──────────────────────────────┬───────────────────────────────┘                      │
+│                                 │                                                      │
+│  ═══════════════════════════════╪════════════════════════════════════════════════════  │
+│                                 │                                                      │
+│  OUR PYTHON ROS 2 FLIGHT ENGINE (src/drone/drone/px4/)                                 │
+│                                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│  │ interface.py [PX4Interface: Central gateway & API class]                         │  │
+│  │ Spawns ONE daemon thread: SingleThreadedExecutor.spin() (fixes 2026 race crash)  │  │
+│  │                                                                                  │  │
+│  │  ┌─────────────────────────┐  ┌───────────────────────┐  ┌────────────────────┐  │  │
+│  │  │ telemetry.py            │  │ commands.py           │  │ offboard.py        │  │  │
+│  │  │ [Sensor Subscriptions]  │  │ [Command & Ack Sender]│  │ [10 Hz Heartbeat]  │  │  │
+│  │  │                         │  │                       │  │                    │  │  │
+│  │  │ Reads: /fmu/out/*       │  │ Writes:               │  │ Writes (10 Hz):    │  │  │
+│  │  │ Caches safe getters:    │  │  • vehicle_command    │  │  • offboard_mode   │  │  │
+│  │  │  get_location()         │  │ Reads:                │  │  • trajectory_     │  │  │
+│  │  │  get_gps_location()     │  │  • vehicle_command_ack│  │    setpoint        │  │  │
+│  │  │  get_battery_status()   │  │                       │  │                    │  │  │
+│  │  │  is_armed(), get_mode() │  │ Methods:              │  │ Methods:           │  │  │
+│  │  │                         │  │  arm_vehicle()        │  │  start_offboard()  │  │  │
+│  │  │ Decodes via:            │  │  disarm_vehicle()     │  │  send_position_... │  │  │
+│  │  │  • convert.py           │  │  takeoff(), land()    │  │  send_velocity_... │  │  │
+│  │  │    (unpacks structs)    │  │  change_mode("RTL")   │  │  hold_position()   │  │  │
+│  │  │                         │  │                       │  │                    │  │  │
+│  │  │ Converts via:           │  │ Uses:                 │  │ Uses:              │  │  │
+│  │  │  • frames.py            │  │  • modes.py (enums)   │  │  • setpoints.py    │  │  │
+│  │  │    (NED -> ENU math)    │  │  • actuators.py (187) │  │    (NaN-masking)   │  │  │
+│  │  │                         │  │                       │  │  • frames.py       │  │  │
+│  │  │                         │  │                       │  │    (ENU -> NED)    │  │  │
+│  │  └────────────▲────────────┘  └───────────▲───────────┘  └─────────▲──────────┘  │  │
+│  └───────────────┼───────────────────────────┼────────────────────────┼─────────────┘  │
+│                  │                           │                        │                │
+│  ════════════════╪═══════════════════════════╪════════════════════════╪══════════════  │
+│                  │                           │                        │                │
+│  THE 9-STEP TESTING LADDER (src/drone/drone/flight_checks/)                            │
+│                                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│  │ common.py: Shared link parser, connect(), safe RC arming, and shutdown cleanup   │  │
+│  └───────────────────────────────────────────┬──────────────────────────────────────┘  │
+│                                              │                                         │
+│   [BENCH CHECKS: Steps 1-5]                  │   [FLIGHT CHECKS: Steps 6-9]            │
+│   • Step 1: check_link.py                    │   • Step 6: check_hover.py              │
+│   • Step 2: check_telemetry.py               │   • Step 7: check_goto_gps.py           │
+│   • Step 3: check_setpoints.py               │   • Step 8: check_gps_movement.py       │
+│   • Step 4: check_offboard.py                │   • Step 9: check_lap.py                │
+│   • Step 5: check_arm.py                     │                                         │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Coordinate Transformations (`frames.py`)
+## 3. File Responsibility Directory
+
+A breakdown of each file's role, its inputs and outputs, and its position in the system:
+
+### Core Flight Engine (`src/drone/drone/px4/`)
+
+| File | Primary Responsibility | What It Reads / Subscribes | What It Writes / Publishes | Key APIs & Functions |
+| :--- | :--- | :--- | :--- | :--- |
+| **`interface.py`** | Central gateway node and single-threaded executor manager. | Inherits all mixins | Dispatches callbacks | `init_px4()`, `shutdown_px4()`, `PX4Interface` |
+| **`telemetry.py`** | Inbound sensor streaming, thread-safe caching, EKF checks. | `/fmu/out/*` sensor topics | Updates internal cache | `get_location()`, `get_gps_location()`, `is_armed()` |
+| **`commands.py`** | Synchronous vehicle command sender and ack listener. | `/fmu/out/vehicle_command_ack` | `/fmu/in/vehicle_command` | `arm_vehicle()`, `disarm_vehicle()`, `takeoff()`, `land()` |
+| **`offboard.py`** | 10 Hz heartbeat streaming and offboard setpoint publisher. | Current target setpoint | `trajectory_setpoint`, `offboard_control_mode` | `start_offboard()`, `send_position_setpoint()` |
+| **`frames.py`** | Pure coordinate transformation math (NED $\leftrightarrow$ ENU). | None (Pure Python) | None (Pure Python) | `ned_to_enu()`, `enu_to_ned()`, `wrap_pi()` |
+| **`setpoints.py`** | Setpoint packet formatting and axis NaN-masking. | None (Pure Python) | None (Pure Python) | `position_setpoint()`, `velocity_setpoint()` |
+| **`modes.py`** | Mode enum translation and command integer mapping. | None (Pure Python) | None (Pure Python) | `mode_command()`, `normalize_mode_name()` |
+| **`actuators.py`** | Maps PWM inputs onto Actuator Sets 1–6 (MAV_CMD 187). | None (Pure Python) | None (Pure Python) | `actuator_command_params()`, `pwm_to_actuator()` |
+| **`qos.py`** | Defines the DDS Quality of Service contract (`PX4_QOS`). | None (ROS 2 config) | None (ROS 2 config) | `PX4_QOS` (Best Effort + Transient Local) |
+| **`topics.py`** | Dynamic message version topic resolver (e.g. `_v1`). | `MESSAGE_VERSION` attribute | Clean topic strings | `in_topic()`, `out_topic()`, `versioned_name()` |
+| **`agent.py`** | MicroXRCEAgent subprocess manager and CLI parser. | Command line flags | Spawns C++ agent process | `add_link_args()`, `start_agent_from_args()` |
+| **`convert.py`** | Decodes raw ROS message structs into clean Python dicts. | Raw `px4_msgs` structs | Dicts with validity checks | `local_position_enu()`, `battery()`, `heading_enu()` |
+
+---
+
+### Verification Ladder (`src/drone/drone/flight_checks/`)
+
+| File | Step | Risk Level | What It Verifies |
+| :--- | :---: | :---: | :--- |
+| **`common.py`** | Shared | — | Shared CLI parser (`--sitl`, `--serial`, `--api`), connection handshake, and safe arming rules. |
+| **`check_link.py`** | **Step 1** | Zero | Confirms `MicroXRCEAgent` is running and PX4 is actively publishing into ROS 2. |
+| **`check_telemetry.py`** | **Step 2** | Zero | Prints live telemetry and verifies EKF health, GPS fix, and coordinate axes before moving. |
+| **`check_setpoints.py`** | **Step 3** | Zero | Dry-runs position and velocity setpoints without arming; confirms ENU $\leftrightarrow$ NED conversion on the wire. |
+| **`check_offboard.py`** | **Step 4** | Zero | Tests the 10 Hz heartbeat handshake and verifies that PX4 accepts and maintains OFFBOARD mode. |
+| **`check_arm.py`** | **Step 5** | Low | Verifies the motor arm/disarm interlock. *(Props removed on bench; RC switch on hardware).* |
+| **`check_hover.py`** | **Step 6** | Medium | The first flight check: arms, takes off to 3m, hovers rock-steady for 10s, auto-lands, and disarms. |
+| **`check_goto_gps.py`** | **Step 7** | Medium | Takes off, resolves a GPS target coordinate to the local frame, navigates to it, and lands. |
+| **`check_gps_movement.py`**| **Step 8** | High | Takes off, flies between sequential waypoints while pointing the drone's nose in the direction of flight. |
+| **`check_lap.py`** | **Step 9** | High | Flies a complete polygonal airfield perimeter lap using smooth velocity control, followed by Return-To-Launch (RTL). |
+
+---
+
+## 4. Coordinate Transformations (`frames.py`)
 
 Aviation autopilots and robotics software use different physical conventions. `drone-2027` isolates all conversions to [`src/drone/drone/px4/frames.py`](file:///Users/benmochen/SynologyDrive/Programming/McGill%20Robotics/drone-2027/src/drone/drone/px4/frames.py):
 
@@ -257,7 +246,7 @@ YawRate_enu = -YawRate_ned    (counter-clockwise vs. clockwise)
 
 ---
 
-## 4. Detailed Data Flow Pipelines
+## 5. Detailed Data Flow Pipelines
 
 ### Pipeline A: Inbound Telemetry Flow (Sensor to Python Getter)
 
