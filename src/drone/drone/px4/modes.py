@@ -10,7 +10,7 @@ Pure Python: no ROS imports, so it can be unit tested anywhere.
 
 import math
 
-# VehicleCommand ids, checked against PX4 release/1.16 msg/versioned/VehicleCommand.msg.
+# VehicleCommand ids, checked against px4_msgs release/1.17 VehicleCommand.msg.
 VEHICLE_CMD_NAV_RETURN_TO_LAUNCH = 20
 VEHICLE_CMD_NAV_LAND = 21
 VEHICLE_CMD_DO_SET_MODE = 176

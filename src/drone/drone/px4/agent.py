@@ -94,21 +94,6 @@ def agent_command(args, agent_bin=AGENT_BIN):
     )
 
 
-def link_flags(args, no_agent=None):
-    """The command-line flags that reproduce this link choice, for child processes."""
-    flags = []
-    if args.sitl:
-        flags.append("--sitl")
-    elif args.udp is not None:
-        flags += ["--udp", str(args.udp)]
-    elif args.serial is not None:
-        flags += ["--serial", args.serial]
-    flags += ["--baud", str(args.baud)]
-    if args.no_agent if no_agent is None else no_agent:
-        flags.append("--no-agent")
-    return flags
-
-
 def start_agent(cmd, suppress_output=True, settle_s=1.0):
     """Launch the agent as a separate process. Returns the Popen handle, or None if it failed."""
     global _agent_process

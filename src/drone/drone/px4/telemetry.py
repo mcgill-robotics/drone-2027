@@ -30,7 +30,7 @@ from drone.px4.topics import out_topic
 # Tune after measuring `ros2 topic hz` on the status topic in SITL and on the drone.
 CONNECTION_TIMEOUT_S = 2.0
 
-# (key, message type, topic base name). Every one of these is in PX4 1.16's dds_topics.yaml.
+# (key, message type, topic base name). Every one of these is in PX4 1.17's dds_topics.yaml.
 TELEMETRY_STREAMS = (
     ("status", VehicleStatus, "vehicle_status"),
     ("local_position", VehicleLocalPosition, "vehicle_local_position"),
@@ -161,7 +161,7 @@ class TelemetryMixin:
         return yaw if yaw is not None else 0.0
 
     def get_attitude_ned(self):
-        """(roll, pitch, yaw) in radians, FRD body relative to NED, or None. Used by api.geo."""
+        """(roll, pitch, yaw) in radians, FRD body relative to NED, or None."""
         msg = self._latest["attitude"]
         return convert.attitude_ned(msg) if msg is not None else None
 

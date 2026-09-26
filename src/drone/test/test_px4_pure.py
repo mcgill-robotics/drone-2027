@@ -283,12 +283,6 @@ class TestAgent:
         with pytest.raises(ValueError):
             agent.agent_command(_parse())
 
-    def test_link_flags_round_trip(self):
-        args = _parse("--udp", "9000")
-        child = _parse(*agent.link_flags(args, no_agent=True))
-        assert agent.agent_command(child) == agent.agent_command(args)
-        assert child.no_agent
-
     def test_links_are_mutually_exclusive(self):
         with pytest.raises(SystemExit):
             _parse("--sitl", "--serial")

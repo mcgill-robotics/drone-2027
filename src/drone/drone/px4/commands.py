@@ -388,7 +388,7 @@ class CommandsMixin:
         MAV_CMD_DO_MOUNT_CONTROL for a gimbal driven by PX4's gimbal module.
 
         Only useful if PX4's gimbal driver owns the gimbal outputs; the actuator-set
-        gimbal used by the UI goes through set_gimbal(). No ack is sent for this command.
+        gimbal goes through set_gimbal(). No ack is sent for this command.
         """
         if not self.connected:
             print("[PX4] Not connected to PX4, cannot set gimbal")
