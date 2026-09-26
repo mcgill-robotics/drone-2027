@@ -1,16 +1,16 @@
 """
-The 9-step flight verification ladder for drone-2027.
+Nine test scripts that check the drone step by step, from "can we talk to PX4?"
+up to a full lap. Run them in order; each one assumes the ones before it passed.
 
-Execute checks in numerical order from Step 1 to Step 9:
-  1. check_link:          Verify MicroXRCEAgent & PX4 FMU bridge connectivity
-  2. check_telemetry:     Validate sensor health, GPS fix, EKF state, and battery
-  3. check_setpoints:     Dry-run ENU <-> NED setpoint math without moving motors
-  4. check_offboard:      Validate 10 Hz heartbeat handshake and OFFBOARD mode switch
-  5. check_arm:           Test motor arming & disarming (PROPS OFF on bench)
-  6. check_hover:         First flight: takeoff to altitude, hover, and land
-  7. check_goto_gps:      Navigate to a single GPS coordinate and hold
-  8. check_gps_movement:  Fly to a GPS target facing the direction of travel
-  9. check_lap:           Complete a multi-waypoint perimeter lap and RTL
+  1. check_link:          the agent starts and PX4 data reaches ROS 2
+  2. check_telemetry:     position, GPS, battery etc. read correctly (nothing moves)
+  3. check_setpoints:     "fly here" orders are sent with the right numbers (not armed)
+  4. check_offboard:      PX4 switches to OFFBOARD and stays there (not armed)
+  5. check_arm:           the motors arm and disarm (PROPS OFF on the bench)
+  6. check_hover:         first flight: take off, hover, land
+  7. check_goto_gps:      fly to one GPS point, then land
+  8. check_gps_movement:  fly to a GPS point facing the way it's flying
+  9. check_lap:           fly a loop of GPS waypoints, then return to launch
 
-See README.md in this directory for detailed commands, flags, and troubleshooting.
+See README.md in this directory for the commands, flags and troubleshooting.
 """
