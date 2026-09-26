@@ -29,6 +29,10 @@ HARDWARE_DEFAULT_LINK = None
 _agent_process = None
 
 
+# Shared CLI flags for choosing how to reach PX4. Only one of --sitl / --udp / --serial
+# may be given; --udp and --serial fall back to their defaults when passed without a
+# value, and are None when omitted. --baud only applies to --serial. This only defines
+# the flags: agent_command() turns the parsed args into the MicroXRCEAgent command line.
 def add_link_args(parser):
     """Add the PX4 link flags to an argparse parser."""
     group = parser.add_argument_group("PX4 link")
