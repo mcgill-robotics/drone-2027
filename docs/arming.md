@@ -47,12 +47,12 @@ attached are dangerous.
 ## Race-day arming flow
 
 ```
-companion boots → MicroXRCEAgent up → PX4 connected → heartbeat stream → OFFBOARD → pilot arm switch → mission runs → pilot disarm or kill
+companion boots → MicroXRCEAgent up → PX4 connected → heartbeat stream → OFFBOARD → pilot arm switch → flight code runs → pilot disarm or kill
 ```
 
 The companion never calls `arm_vehicle()` in this flow. The pilot is the
-arming authority. The flight checks and mission runners only arm from code
-with `--api` / `--api-arm`, which they refuse unless `--sitl` is also given.
+arming authority. The flight checks only arm from code with `--api`, which
+they refuse unless `--sitl` is also given.
 The one exception is `check_arm --api`, meant for props-off bench tests.
 
 ## Common gotchas

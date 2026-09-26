@@ -18,7 +18,7 @@ release, repeat step 0 for that version.
    px4_msgs at startup and a warning is printed if they differ.
 
 2. **How the Jetson is wired to the flight controller.** drone-2026 was
-   inconsistent: `api_server.py` used Ethernet (`192.168.144.11`) while the test
+   inconsistent: its `api_server.py` used Ethernet (`192.168.144.11`) while the test
    scripts used serial (`/dev/ttyTHS1` at 921600 baud). Check the cable, and in QGC
    look at `MAV_0_CONFIG`, `MAV_1_CONFIG`, `MAV_2_CONFIG` to see which port currently
    carries MAVLink to the Jetson. Then set `HARDWARE_DEFAULT_LINK` in
@@ -88,8 +88,8 @@ From `docs/arming.md` (unchanged by the port):
 
 ## 4. Motion limits
 
-drone-2026 set these from code before every flight. Set them once here; the flight
-checks and Mission 1 print them as a reminder but cannot verify them.
+drone-2026 set these from code before every flight. Set them once here; `check_gps_movement`
+prints them as a reminder but nothing can verify them from code.
 
 | Parameter | Value |
 | --- | --- |

@@ -33,32 +33,48 @@ Write the output numbers into the table above.
 
 ## Values
 
-The API and UI still use PWM-style numbers. `pwm_to_actuator()` maps 1000..2000 onto
--1..1 (1500 → 0, 1900 → 0.8). Spray sends 1.0 for on and 0.0 for off.
+The `PX4Interface` methods take PWM-style numbers. `pwm_to_actuator()` maps 1000..2000
+onto -1..1 (1500 → 0, 1900 → 0.8). Spray sends 1.0 for on and 0.0 for off.
 
 ## No confirmation from PX4
 
-PX4 handles `DO_SET_ACTUATOR` outside its commander and sends no acknowledgement. An
-API response of `success: true` only means the command was sent. Watch the device.
+PX4 handles `DO_SET_ACTUATOR` outside its commander and sends no acknowledgement. A
+method returning `True` only means the command was sent. Watch the device.
 
 ## Bench test (props off)
 
-1. `ros2 run drone api_server <link>`, then open `ui/index.html`.
-2. Hold **Spray Water**: pump runs. Release: pump stops.
-3. **Release Payload**: both payload servos pulse and return.
-4. **Small Payload**: the small motor toggles.
-5. Arrow keys: the gimbal moves.
-6. Repeat 2–5 with the vehicle armed (props off) and disarmed. If an output only
-   moves when armed, note it here, because the payloads and gimbal are used before arming.
+Start the agent in one terminal (`ros2 launch drone agent.launch.py transport:=serial`,
+or leave `transport` at its default `udp` for Ethernet), then drive the outputs from
+`python3` in another (after `source install/setup.bash`):
 
-## API
+```python
+from drone.px4.interface import init_px4, shutdown_px4
+px4 = init_px4()
+
+px4.activate_spray()      # pump runs
+px4.deactivate_spray()    # pump stops
+px4.release_payload()     # both payload servos pulse and return
+px4.toggle_small_motor()  # small motor on; call again to stop
+px4.set_gimbal(yaw_pwm=1700, pitch_pwm=1300)  # gimbal moves
+px4.center_gimbal()
+
+shutdown_px4()
+```
+
+Repeat with the vehicle armed (props off) and disarmed. If an output only moves when
+armed, note it here, because the payloads and gimbal are used before arming.
+
+## Methods
+
+All in `drone/px4/commands.py`; every argument is optional and defaults to the value shown.
 
 ```
-POST /spray                 {"action": "activate" | "deactivate", "slot": 1, "value": 1.0}
-POST /payload/release       {"slots": [2, 3], "release_pwm": 1900, "neutral_pwm": 1500, "pulse_seconds": 0.5}
-POST /payload/small-release {"slot": 4, "release_pwm": 1900, "neutral_pwm": 1500, "pulse_seconds": 0.5}
-POST /payload/small         {"action": "start" | "stop" | "toggle", "slot": 4, "pwm_on": 1900, "neutral_pwm": 1500}
-POST /gimbal/set            {"yaw_pwm": 1500, "pitch_pwm": 1500, "yaw_slot": 5, "pitch_slot": 6}
+activate_spray(actuator_slot=1, actuator_value=1.0)
+deactivate_spray(actuator_slot=1, actuator_value=0.0)
+release_payload(slots=(2, 3), release_pwm=1900, neutral_pwm=1500, pulse_seconds=0.5)
+release_small_payload(slot=4, release_pwm=1900, neutral_pwm=1500, pulse_seconds=0.5)
+start_small_motor(slot=4, pwm_value=1900) / stop_small_motor(slot=4, neutral_pwm=1500)
+toggle_small_motor(slot=4, pwm_on=1900, neutral_pwm=1500)
+set_gimbal(yaw_pwm=1500, pitch_pwm=1500, yaw_slot=5, pitch_slot=6)
+center_gimbal(yaw_slot=5, pitch_slot=6, neutral_pwm=1500)
 ```
-
-All fields are optional; the defaults are the values shown.
