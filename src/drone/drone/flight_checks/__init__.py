@@ -9,7 +9,7 @@ Execute checks in numerical order from Step 1 to Step 9:
   5. check_arm:           Test motor arming & disarming (PROPS OFF on bench)
   6. check_hover:         First flight: takeoff to altitude, hover, and land
   7. check_goto_gps:      Navigate to a single GPS coordinate and hold
-  8. check_gps_movement:  Fly sequential GPS waypoints facing direction of travel
+  8. check_gps_movement:  Fly to a GPS target facing the direction of travel
   9. check_lap:           Complete a multi-waypoint perimeter lap and RTL
 
 See README.md in this directory for detailed commands, flags, and troubleshooting.

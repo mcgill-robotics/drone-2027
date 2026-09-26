@@ -17,7 +17,7 @@ Never skip steps on physical hardware. The ladder is deliberately organized into
 | **5** | `check_arm` | **Low** | ⚠️ **PROPS OFF** | Verifies motor arming and disarming interlocks. |
 | **6** | `check_hover` | **Medium** | Props On (Outdoor) | First autonomous takeoff, 3m hover hold, and auto-landing. |
 | **7** | `check_goto_gps` | **Medium** | Props On (Outdoor) | Flies to a single GPS coordinate with absolute position setpoints. |
-| **8** | `check_gps_movement` | **High** | Props On (Outdoor) | Flies between sequential waypoints while facing the direction of travel. |
+| **8** | `check_gps_movement` | **High** | Props On (Outdoor) | Flies to a GPS target while facing the direction of travel. |
 | **9** | `check_lap` | **High** | Props On (Outdoor) | Executes a complete polygonal perimeter lap and Returns-to-Launch (RTL). |
 
 ---
@@ -60,7 +60,7 @@ Confirms that `MicroXRCEAgent` starts, reaches PX4, and detects active uORB topi
   [CHECK] PX4 publishers visible through the agent:
       /fmu/out/vehicle_status_v1                 publishers=1
       /fmu/out/vehicle_local_position_v1         publishers=1
-      /fmu/out/battery_status                    publishers=1
+      /fmu/out/battery_status_v1                 publishers=1
   [MAIN] ✓ Check passed
   ```
 * **Failure Troubleshooting:**
@@ -212,7 +212,7 @@ Executes a multi-waypoint perimeter lap using smooth velocity setpoints (fast on
 
 ## 4. Shared Command-Line Flags
 
-Every check script accepts the common link arguments defined in [`src/drone/drone/px4/agent.py`](file:///Users/benmochen/SynologyDrive/Programming/McGill%20Robotics/drone-2027/src/drone/drone/px4/agent.py):
+Every check script accepts the common link arguments defined in [`src/drone/drone/px4/agent.py`](../px4/agent.py):
 
 | Flag | Argument | Description |
 | :--- | :--- | :--- |
@@ -221,7 +221,7 @@ Every check script accepts the common link arguments defined in [`src/drone/dron
 | `--baud` | `[BAUD]` | Serial baud rate (default `921600`). |
 | `--udp` | `[PORT]` | Connects over Ethernet UDP (default `8888`). |
 | `--no-agent` | None | Bypasses launching the agent if one is already running in another terminal. |
-| `--api` | None | Allows software-commanded arming (only allowed with `--sitl`). |
+| `--api` | None | Arms from code instead of waiting for the RC switch. Refused without `--sitl`, except in `check_arm` (props-off bench test). |
 
 ---
 

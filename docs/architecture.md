@@ -37,7 +37,7 @@ flowchart TD
     class STAGE3,DDS_AGENT bridge;
 
     subgraph STAGE4["4. ROS 2 Middleware (px4_msgs release/1.17)"]
-        FMU_OUT["/fmu/out/* Sensor Streams (QoS: BEST_EFFORT)<br/>• vehicle_local_position_v1<br/>• vehicle_status_v1<br/>• battery_status, vehicle_global_position"]
+        FMU_OUT["/fmu/out/* Sensor Streams (QoS: BEST_EFFORT)<br/>• vehicle_local_position_v1<br/>• vehicle_status_v1<br/>• battery_status_v1, vehicle_global_position"]
         FMU_IN["/fmu/in/* Control Streams (QoS: BEST_EFFORT)<br/>• vehicle_command (Arm, Land, RTL, Modes)<br/>• trajectory_setpoint (10 Hz Position/Velocity)<br/>• offboard_control_mode (10 Hz Heartbeat)"]
     end
     class STAGE4,FMU_OUT,FMU_IN ros;
@@ -47,7 +47,7 @@ flowchart TD
         
         TEL["telemetry.py<br/>Reads /fmu/out/*<br/>Caches thread-safe ENU state"]
         CMD["commands.py<br/>Publishes to /fmu/in/vehicle_command<br/>Synchronous wait on vehicle_command_ack"]
-        OFF["offboard.py<br/>10 Hz Background Timer Thread<br/>Streams heartbeat & setpoints"]
+        OFF["offboard.py<br/>10 Hz Background Heartbeat Thread<br/>Streams heartbeat & setpoints"]
         
         HELPERS["Support Modules:<br/>• frames.py (NED ⟷ ENU math)<br/>• setpoints.py (NaN-masked setpoints)<br/>• modes.py (Mode params)<br/>• actuators.py (Sets 1–6)<br/>• qos.py (Delivery contract)<br/>• topics.py (Version resolver)<br/>• convert.py (Dict unpacking)"]
         
@@ -136,7 +136,7 @@ This diagram shows the complete hardware and software topology, highlighting **w
 │  │  │                         │  │  arm_vehicle()        │  │  start_offboard()  │  │  │
 │  │  │ Decodes via:            │  │  disarm_vehicle()     │  │  send_position_... │  │  │
 │  │  │  • convert.py           │  │  takeoff(), land()    │  │  send_velocity_... │  │  │
-│  │  │    (unpacks structs)    │  │  change_mode("RTL")   │  │  hold_position()   │  │  │
+│  │  │    (unpacks structs)    │  │  change_mode("RTL")   │  │  hold_current_...  │  │  │
 │  │  │                         │  │                       │  │                    │  │  │
 │  │  │ Converts via:           │  │ Uses:                 │  │ Uses:              │  │  │
 │  │  │  • frames.py            │  │  • modes.py (enums)   │  │  • setpoints.py    │  │  │
@@ -200,14 +200,14 @@ A breakdown of each file's role, its inputs and outputs, and its position in the
 | **`check_arm.py`** | **Step 5** | Low | Verifies the motor arm/disarm interlock. *(Props removed on bench; RC switch on hardware).* |
 | **`check_hover.py`** | **Step 6** | Medium | The first flight check: arms, takes off to 3m, hovers rock-steady for 10s, auto-lands, and disarms. |
 | **`check_goto_gps.py`** | **Step 7** | Medium | Takes off, resolves a GPS target coordinate to the local frame, navigates to it, and lands. |
-| **`check_gps_movement.py`**| **Step 8** | High | Takes off, flies between sequential waypoints while pointing the drone's nose in the direction of flight. |
+| **`check_gps_movement.py`**| **Step 8** | High | Takes off, flies to a GPS target while pointing the drone's nose in the direction of flight, and lands. |
 | **`check_lap.py`** | **Step 9** | High | Flies a complete polygonal airfield perimeter lap using smooth velocity control, followed by Return-To-Launch (RTL). |
 
 ---
 
 ## 4. Coordinate Transformations (`frames.py`)
 
-Aviation autopilots and robotics software use different physical conventions. `drone-2027` isolates all conversions to [`src/drone/drone/px4/frames.py`](file:///Users/benmochen/SynologyDrive/Programming/McGill%20Robotics/drone-2027/src/drone/drone/px4/frames.py):
+Aviation autopilots and robotics software use different physical conventions. `drone-2027` isolates all conversions to [`src/drone/drone/px4/frames.py`](../src/drone/drone/px4/frames.py):
 
 * **NED (North, East, Down):** Native PX4 aviation coordinate frame.
   * $+X$ points North
@@ -264,15 +264,16 @@ YawRate_enu = -YawRate_ned    (counter-clockwise vs. clockwise)
          │ (Translates to ROS 2 topic: /fmu/out/vehicle_local_position_v1)
          ▼
 [PX4Interface: Dedicated Executor Spin Thread]
-         │ (Dispatches to TelemetryMixin._local_position_callback)
+         │ (Runs the store callback made by TelemetryMixin._make_store_callback)
          ▼
-[drone.px4.convert.local_position_enu()]
-         │ (Validates xy_valid, converts NED -> ENU coordinates)
-         ▼
-[Self-Cached Dict: self._telemetry_cache["local_position"]]
+[Latest raw message: self._latest["local_position"] (+ arrival time in _received_at)]
          ▲
          │ (Instant, non-blocking read from any thread)
 [Caller: px4.get_location()]
+         │
+         ▼
+[drone.px4.convert.local_position_enu(msg)]
+           (Returns None unless xy_valid and z_valid; converts NED -> ENU on each call)
 ```
 
 ---
@@ -283,8 +284,8 @@ YawRate_enu = -YawRate_ned    (counter-clockwise vs. clockwise)
 [Caller / Flight Check Script: px4.arm_vehicle(timeout=20)]
          │
          ▼
-[CommandsMixin._send_command_sync(CMD_ARM)]
-         │ 1. Registers threading.Event in _ack_waiters[ARM_ID]
+[CommandsMixin.send_command(VEHICLE_CMD_COMPONENT_ARM_DISARM, (1.0,))]
+         │ 1. Registers [threading.Event, result] in _ack_waiters[400]
          │ 2. Publishes VehicleCommand to /fmu/in/vehicle_command
          ▼
 [MicroXRCEAgent] ──(Serial / UDP)──> [PX4 uXRCE-DDS Client]
@@ -298,11 +299,12 @@ YawRate_enu = -YawRate_ned    (counter-clockwise vs. clockwise)
 [CommandsMixin._ack_callback()] <─────────────┘
   │ (Received by background spin thread)
   │
-  ├─ Matches command_id == ARM_ID
-  └─ Sets threading.Event and stores Result code
+  ├─ Looks up _ack_waiters[msg.command] (ignores IN_PROGRESS acks)
+  └─ Stores the result code and sets the threading.Event
          │
          ▼
-[Caller Unblocks: returns True (Armed)]
+[send_command() returns the result; arm_vehicle() then polls
+ vehicle_status until it reports armed, and returns True]
 ```
 
 ---
@@ -313,18 +315,18 @@ YawRate_enu = -YawRate_ned    (counter-clockwise vs. clockwise)
 [OffboardMixin.start_offboard_stream_background()]
          │
          ▼
-[Background Timer Thread: 10 Hz Loop (Every 100ms)]
+[Background Heartbeat Thread: 10 Hz Loop (Every 100ms)]
          │
-         ├─ Reads active target from self._current_target
+         ├─ Skips this tick if the caller published a setpoint in the last 100ms
          │
-         ├─ setpoints.position_setpoint(x, y, z, yaw)
-         │    └─ Converts target ENU -> NED
-         │    └─ Masks unconstrained velocity/acceleration axes with NaN
+         ├─ Otherwise republishes self._last_setpoint (already converted to NED
+         │  by setpoints.position_setpoint() / velocity_setpoint() when the caller
+         │  sent it), or zero velocity if nothing has been sent yet
          │
-         ├─ Publishes TrajectorySetpoint to /fmu/in/trajectory_setpoint
+         ├─ Publishes OffboardControlMode (position or velocity flag set to match)
+         │    to /fmu/in/offboard_control_mode
          │
-         └─ Publishes OffboardControlMode (position=True, velocity=False)
-              to /fmu/in/offboard_control_mode
+         └─ Publishes TrajectorySetpoint to /fmu/in/trajectory_setpoint
          │
          ▼
 [PX4 Flight Task Offboard]

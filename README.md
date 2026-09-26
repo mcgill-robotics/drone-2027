@@ -6,9 +6,9 @@ It talks to the PX4 flight controller through PX4's **uXRCE-DDS bridge**:
 `MicroXRCEAgent` runs on the Jetson, and PX4's internal messages appear as ROS 2
 topics under `/fmu/out` and `/fmu/in` with `px4_msgs` types. MAVROS is gone.
 
-> **Before flying:** do step 0 in `docs/px4_setup.md`. The exact PX4 firmware version
-> and whether the Jetson reaches the flight controller over serial or Ethernet are not
-> confirmed yet.
+> **Before flying:** do step 0 in `docs/px4_setup.md`. The firmware is confirmed as
+> PX4 v1.17.0, but whether the Jetson reaches the flight controller over serial or
+> Ethernet is not confirmed yet.
 
 ## Documentation
 
@@ -71,8 +71,8 @@ Run the checks in numerical order from Step 1 to Step 9:
 | **4** | `ros2 run drone check_offboard --sitl` | Tests 10 Hz OFFBOARD heartbeat handshake with PX4 | Zero risk (Motors disarmed) |
 | **5** | `ros2 run drone check_arm --sitl --api` | Tests arming/disarming interlock | Low risk (Props removed!) |
 | **6** | `ros2 run drone check_hover --sitl --api --altitude 3` | Arms, takes off to 3m, hovers rock-steady, lands | First flight test |
-| **7** | `ros2 run drone check_goto_gps --sitl --api` | Commands navigation to a GPS waypoint and holds | Position navigation |
-| **8** | `ros2 run drone check_gps_movement --sitl --api` | Flies sequential GPS path waypoints | Trajectory tracking |
+| **7** | `ros2 run drone check_goto_gps --sitl --api --lat 47.39785 --lon 8.54573` | Commands navigation to a GPS waypoint and holds | Position navigation |
+| **8** | `ros2 run drone check_gps_movement --sitl --api --target 47.39785,8.54573,5` | Flies to a GPS target facing the direction of travel | Trajectory tracking |
 | **9** | `ros2 run drone check_lap --sitl --api` | Executes full perimeter lap and Return-to-Launch | Complete flight loop |
 
 `--api` arms from code and is strictly refused without `--sitl`: on the real
@@ -92,3 +92,6 @@ strictly isolated to `src/drone/drone/px4/frames.py` and `setpoints.py`.
 pip install pytest
 pytest                         # ROS-free unit tests
 ```
+
+pytest older than 7 (e.g. Ubuntu 22.04's `python3-pytest`) ignores the `pythonpath`
+setting in `pytest.ini`; run `PYTHONPATH=src/drone pytest` instead.
