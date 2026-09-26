@@ -60,7 +60,7 @@ ros2 run drone check_lap --sitl --api
 
 Every getter, setpoint and target in `drone.px4` and the flight checks is **ENU**:
 x = East, y = North, z = Up, relative to PX4's local origin. PX4's own topics are
-NED; `src/drone/drone/px4/frames.py` converts between them. `send_position_setpoint(20, 0, 3)`
+NED; `src/drone/drone/px4/ned_enu_math_convert.py` converts between them. `send_position_setpoint(20, 0, 3)`
 means 20 m East of the local origin, 3 m up.
 
 ## Troubleshooting

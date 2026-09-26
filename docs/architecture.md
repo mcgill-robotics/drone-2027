@@ -49,7 +49,7 @@ flowchart TD
         CMD["commands.py<br/>Publishes to /fmu/in/vehicle_command<br/>Synchronous wait on vehicle_command_ack"]
         OFF["offboard.py<br/>10 Hz Background Heartbeat Thread<br/>Streams heartbeat & setpoints"]
         
-        HELPERS["Support Modules:<br/>• frames.py (NED ⟷ ENU math)<br/>• setpoints.py (NaN-masked setpoints)<br/>• modes.py (Mode params)<br/>• actuators.py (Sets 1–6)<br/>• qos.py (Delivery contract)<br/>• topics.py (Version resolver)<br/>• convert.py (Dict unpacking)"]
+        HELPERS["Support Modules:<br/>• ned_enu_math_convert.py (NED ⟷ ENU math)<br/>• setpoints.py (NaN-masked setpoints)<br/>• modes.py (Mode params)<br/>• actuators.py (Sets 1–6)<br/>• qos.py (Delivery contract)<br/>• topics.py (Version resolver)<br/>• convert_ned_enu.py (Dict unpacking)"]
         
         FMU_OUT --> TEL
         TEL --> PX4_IFACE
@@ -135,13 +135,15 @@ This diagram shows the complete hardware and software topology, highlighting **w
 │  │  │  is_armed(), get_mode() │  │ Methods:              │  │ Methods:           │  │  │
 │  │  │                         │  │  arm_vehicle()        │  │  start_offboard()  │  │  │
 │  │  │ Decodes via:            │  │  disarm_vehicle()     │  │  send_position_... │  │  │
-│  │  │  • convert.py           │  │  takeoff(), land()    │  │  send_velocity_... │  │  │
+│  │  │  • convert_ned_enu.py   │  │  takeoff(), land()    │  │  send_velocity_... │  │  │
 │  │  │    (unpacks structs)    │  │  change_mode("RTL")   │  │  hold_current_...  │  │  │
 │  │  │                         │  │                       │  │                    │  │  │
 │  │  │ Converts via:           │  │ Uses:                 │  │ Uses:              │  │  │
-│  │  │  • frames.py            │  │  • modes.py (enums)   │  │  • setpoints.py    │  │  │
-│  │  │    (NED -> ENU math)    │  │  • actuators.py (187) │  │    (NaN-masking)   │  │  │
-│  │  │                         │  │                       │  │  • frames.py       │  │  │
+│  │  │  • ned_enu_math_        │  │  • modes.py (enums)   │  │  • setpoints.py    │  │  │
+│  │  │    convert.py           │  │  • actuators.py (187) │  │    (NaN-masking)   │  │  │
+│  │  │    (NED -> ENU math)    │  │                       │  │                    │  │  │
+│  │  │                         │  │                       │  │  • ned_enu_math_   │  │  │
+│  │  │                         │  │                       │  │    convert.py      │  │  │
 │  │  │                         │  │                       │  │    (ENU -> NED)    │  │  │
 │  │  └────────────▲────────────┘  └───────────▲───────────┘  └─────────▲──────────┘  │  │
 │  └───────────────┼───────────────────────────┼────────────────────────┼─────────────┘  │
@@ -177,14 +179,14 @@ A breakdown of each file's role, its inputs and outputs, and its position in the
 | **`telemetry.py`** | Inbound sensor streaming, thread-safe caching, EKF checks. | `/fmu/out/*` sensor topics | Updates internal cache | `get_location()`, `get_gps_location()`, `is_armed()` |
 | **`commands.py`** | Synchronous vehicle command sender and ack listener. | `/fmu/out/vehicle_command_ack` | `/fmu/in/vehicle_command` | `arm_vehicle()`, `disarm_vehicle()`, `takeoff()`, `land()` |
 | **`offboard.py`** | 10 Hz heartbeat streaming and offboard setpoint publisher. | Current target setpoint | `trajectory_setpoint`, `offboard_control_mode` | `start_offboard()`, `send_position_setpoint()` |
-| **`frames.py`** | Pure coordinate transformation math (NED $\leftrightarrow$ ENU). | None (Pure Python) | None (Pure Python) | `ned_to_enu()`, `enu_to_ned()`, `wrap_pi()` |
+| **`ned_enu_math_convert.py`** | Pure coordinate transformation math (NED $\leftrightarrow$ ENU). | None (Pure Python) | None (Pure Python) | `ned_to_enu()`, `enu_to_ned()`, `wrap_pi()` |
 | **`setpoints.py`** | Setpoint packet formatting and axis NaN-masking. | None (Pure Python) | None (Pure Python) | `position_setpoint()`, `velocity_setpoint()` |
 | **`modes.py`** | Mode enum translation and command integer mapping. | None (Pure Python) | None (Pure Python) | `mode_command()`, `normalize_mode_name()` |
 | **`actuators.py`** | Maps PWM inputs onto Actuator Sets 1–6 (MAV_CMD 187). | None (Pure Python) | None (Pure Python) | `actuator_command_params()`, `pwm_to_actuator()` |
 | **`qos.py`** | Defines the DDS Quality of Service contract (`PX4_QOS`). | None (ROS 2 config) | None (ROS 2 config) | `PX4_QOS` (Best Effort + Transient Local) |
 | **`topics.py`** | Dynamic message version topic resolver (e.g. `_v1`). | `MESSAGE_VERSION` attribute | Clean topic strings | `in_topic()`, `out_topic()`, `versioned_name()` |
 | **`agent.py`** | MicroXRCEAgent subprocess manager and CLI parser. | Command line flags | Spawns C++ agent process | `add_link_args()`, `start_agent_from_args()` |
-| **`convert.py`** | Decodes raw ROS message structs into clean Python dicts. | Raw `px4_msgs` structs | Dicts with validity checks | `local_position_enu()`, `battery()`, `heading_enu()` |
+| **`convert_ned_enu.py`** | Decodes raw ROS message structs into clean Python dicts. | Raw `px4_msgs` structs | Dicts with validity checks | `local_position_enu()`, `battery()`, `heading_enu()` |
 
 ---
 
@@ -205,9 +207,9 @@ A breakdown of each file's role, its inputs and outputs, and its position in the
 
 ---
 
-## 4. Coordinate Transformations (`frames.py`)
+## 4. Coordinate Transformations (`ned_enu_math_convert.py`)
 
-Aviation autopilots and robotics software use different physical conventions. `drone-2027` isolates all conversions to [`src/drone/drone/px4/frames.py`](../src/drone/drone/px4/frames.py):
+Aviation autopilots and robotics software use different physical conventions. `drone-2027` isolates all conversions to [`src/drone/drone/px4/ned_enu_math_convert.py`](../src/drone/drone/px4/ned_enu_math_convert.py):
 
 * **NED (North, East, Down):** Native PX4 aviation coordinate frame.
   * $+X$ points North
@@ -272,7 +274,7 @@ YawRate_enu = -YawRate_ned    (counter-clockwise vs. clockwise)
 [Caller: px4.get_location()]
          │
          ▼
-[drone.px4.convert.local_position_enu(msg)]
+[drone.px4.convert_ned_enu.local_position_enu(msg)]
            (Returns None unless xy_valid and z_valid; converts NED -> ENU on each call)
 ```
 

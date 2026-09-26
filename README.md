@@ -26,7 +26,7 @@ docs/                     architecture.md, px4_setup.md, arming.md, actuators.md
 docker/Dockerfile         ROS 2 Humble + Micro-XRCE-DDS-Agent
 src/px4_msgs/             PX4 message definitions (git submodule, pinned to firmware release/1.17)
 src/drone/                ROS 2 package with the core flight engine
-  drone/px4/              PX4 interface: telemetry, commands, offboard, frames, agent
+  drone/px4/              PX4 interface: telemetry, commands, offboard, ned_enu_math_convert, agent
   drone/flight_checks/    The 9-step testing ladder (check_link -> check_lap, README.md)
   launch/                 agent.launch.py
   test/                   Pure logic unit tests (no ROS needed)
@@ -84,7 +84,7 @@ Simulator setup: `docs/sitl.md`. Drone hardware setup: `docs/px4_setup.md`.
 
 All high-level code works in **ENU** (x East, y North, z Up), as standard in robotics.
 PX4's internal topics work in aviation **NED** (North, East, Down). Conversions are
-strictly isolated to `src/drone/drone/px4/frames.py` and `setpoints.py`.
+strictly isolated to `src/drone/drone/px4/ned_enu_math_convert.py` and `setpoints.py`.
 
 ## Tests
 

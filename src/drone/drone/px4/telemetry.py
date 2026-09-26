@@ -20,8 +20,8 @@ from px4_msgs.msg import (
     VehicleStatus,
 )
 
-from drone.px4 import convert
-from drone.px4.frames import euler_ned_to_enu
+from drone.px4 import convert_ned_enu
+from drone.px4.ned_enu_math_convert import euler_ned_to_enu
 from drone.px4.modes import nav_state_names, normalize_mode_name
 from drone.px4.qos import PX4_QOS
 from drone.px4.topics import out_topic
@@ -140,7 +140,7 @@ class TelemetryMixin:
     def get_location(self):
         """Local position {"x": east, "y": north, "z": up} in metres, or None."""
         msg = self._latest["local_position"]
-        return convert.local_position_enu(msg) if msg is not None else None
+        return convert_ned_enu.local_position_enu(msg) if msg is not None else None
 
     def get_altitude(self):
         loc = self.get_location()
@@ -149,12 +149,12 @@ class TelemetryMixin:
     def get_velocity(self):
         """Local velocity {"x": east, "y": north, "z": up} in m/s, or None."""
         msg = self._latest["local_position"]
-        return convert.local_velocity_enu(msg) if msg is not None else None
+        return convert_ned_enu.local_velocity_enu(msg) if msg is not None else None
 
     def get_current_yaw(self):
         """ENU yaw in radians (0 = facing East, counter-clockwise positive). 0.0 if unknown."""
         msg = self._latest["local_position"]
-        yaw = convert.heading_enu(msg) if msg is not None else None
+        yaw = convert_ned_enu.heading_enu(msg) if msg is not None else None
         if yaw is None:
             attitude = self.get_attitude_enu()
             yaw = attitude[2] if attitude else None
@@ -163,7 +163,7 @@ class TelemetryMixin:
     def get_attitude_ned(self):
         """(roll, pitch, yaw) in radians, FRD body relative to NED, or None."""
         msg = self._latest["attitude"]
-        return convert.attitude_ned(msg) if msg is not None else None
+        return convert_ned_enu.attitude_ned(msg) if msg is not None else None
 
     def get_attitude_enu(self):
         """(roll, pitch, yaw) in radians, FLU body relative to ENU, or None."""
@@ -191,22 +191,22 @@ class TelemetryMixin:
     def get_gps_location(self):
         """Fused global position {"latitude", "longitude", "altitude" (AMSL m)} or None."""
         msg = self._latest["global_position"]
-        return convert.global_position(msg) if msg is not None else None
+        return convert_ned_enu.global_position(msg) if msg is not None else None
 
     def get_gps_raw(self, gps_id=1):
         """Raw receiver data. PX4 bridges one GPS (vehicle_gps_position), so gps_id 2 returns None."""
         msg = self._latest["gps"]
         if gps_id != 1 or msg is None:
             return None
-        return convert.gps_raw(msg)
+        return convert_ned_enu.gps_raw(msg)
 
     def get_home_location(self):
         msg = self._latest["home"]
-        return convert.home_position(msg) if msg is not None else None
+        return convert_ned_enu.home_position(msg) if msg is not None else None
 
     def get_battery_status(self):
         msg = self._latest["battery"]
-        return convert.battery(msg) if msg is not None else None
+        return convert_ned_enu.battery(msg) if msg is not None else None
 
     # =========================================================
     # Debug output

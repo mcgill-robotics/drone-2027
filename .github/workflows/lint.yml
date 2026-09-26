@@ -12,8 +12,8 @@ jobs:
           python-version: '3.11'
       - uses: pre-commit/action@v3.0.1
 
-  # Unit tests for the parts of drone/ that do not need ROS 2 (frames, topics,
-  # modes, setpoints, actuators, convert, agent flags).
+  # Unit tests for the parts of drone/ that do not need ROS 2 (ned_enu_math_convert,
+  # topics, modes, setpoints, actuators, convert_ned_enu, agent flags).
   unit-tests:
     runs-on: ubuntu-latest
     steps:

@@ -1,8 +1,9 @@
 """
 Unit tests for the ROS-free parts of drone.px4.
 
-These run anywhere (`pytest` from the repo root, and in CI) because frames, topics,
-modes, setpoints, actuators, convert and agent do not import rclpy or px4_msgs.
+These run anywhere (`pytest` from the repo root, and in CI) because
+ned_enu_math_convert, topics, modes, setpoints, actuators, convert_ned_enu and agent
+do not import rclpy or px4_msgs.
 """
 
 import argparse
@@ -11,7 +12,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from drone.px4 import actuators, agent, convert, frames, modes, setpoints
+from drone.px4 import (
+    actuators,
+    agent,
+    convert_ned_enu,
+    modes,
+    ned_enu_math_convert,
+    setpoints,
+)
 from drone.px4.topics import in_topic, out_topic, versioned_name
 
 
@@ -20,20 +28,23 @@ def close(a, b, tol=1e-9):
 
 
 def angle_close(a, b, tol=1e-9):
-    return abs(frames.wrap_pi(a - b)) < tol
+    return abs(ned_enu_math_convert.wrap_pi(a - b)) < tol
 
 
 # ---------------------------------------------------------------------------
-# frames
+# ned_enu_math_convert
 # ---------------------------------------------------------------------------
 class TestFrames:
     def test_ned_to_enu_axes(self):
         # 1 m North, 2 m East, 3 m Down -> 2 m East, 1 m North, 3 m below the origin
-        assert frames.ned_to_enu(1.0, 2.0, 3.0) == (2.0, 1.0, -3.0)
+        assert ned_enu_math_convert.ned_to_enu(1.0, 2.0, 3.0) == (2.0, 1.0, -3.0)
 
     def test_position_round_trip(self):
         enu = (3.0, -4.0, 5.0)
-        assert frames.ned_to_enu(*frames.enu_to_ned(*enu)) == enu
+        assert (
+            ned_enu_math_convert.ned_to_enu(*ned_enu_math_convert.enu_to_ned(*enu))
+            == enu
+        )
 
     @pytest.mark.parametrize(
         "heading_ned, yaw_enu",
@@ -45,27 +56,34 @@ class TestFrames:
         ],
     )
     def test_yaw_ned_to_enu(self, heading_ned, yaw_enu):
-        assert angle_close(frames.yaw_ned_to_enu(heading_ned), yaw_enu)
+        assert angle_close(ned_enu_math_convert.yaw_ned_to_enu(heading_ned), yaw_enu)
 
     @pytest.mark.parametrize("yaw", [-3.0, -1.0, 0.0, 0.5, 2.9])
     def test_yaw_round_trip(self, yaw):
-        assert angle_close(frames.yaw_enu_to_ned(frames.yaw_ned_to_enu(yaw)), yaw)
+        assert angle_close(
+            ned_enu_math_convert.yaw_enu_to_ned(
+                ned_enu_math_convert.yaw_ned_to_enu(yaw)
+            ),
+            yaw,
+        )
 
     def test_yaw_rate_flips_sign(self):
-        assert frames.yaw_rate_enu_to_ned(0.3) == -0.3
-        assert frames.yaw_rate_ned_to_enu(-0.3) == 0.3
+        assert ned_enu_math_convert.yaw_rate_enu_to_ned(0.3) == -0.3
+        assert ned_enu_math_convert.yaw_rate_ned_to_enu(-0.3) == 0.3
 
     def test_identity_quaternion(self):
-        roll, pitch, yaw = frames.quat_wxyz_to_euler(1.0, 0.0, 0.0, 0.0)
+        roll, pitch, yaw = ned_enu_math_convert.quat_wxyz_to_euler(1.0, 0.0, 0.0, 0.0)
         assert close(roll, 0.0) and close(pitch, 0.0) and close(yaw, 0.0)
 
     def test_quaternion_yaw_90(self):
         half = math.pi / 4
-        _, _, yaw = frames.quat_wxyz_to_euler(math.cos(half), 0.0, 0.0, math.sin(half))
+        _, _, yaw = ned_enu_math_convert.quat_wxyz_to_euler(
+            math.cos(half), 0.0, 0.0, math.sin(half)
+        )
         assert close(yaw, math.pi / 2)
 
     def test_euler_ned_to_enu(self):
-        roll, pitch, yaw = frames.euler_ned_to_enu(0.1, 0.2, 0.0)
+        roll, pitch, yaw = ned_enu_math_convert.euler_ned_to_enu(0.1, 0.2, 0.0)
         assert close(roll, 0.1) and close(pitch, -0.2) and angle_close(yaw, math.pi / 2)
 
 
@@ -207,35 +225,42 @@ class TestActuators:
 
 
 # ---------------------------------------------------------------------------
-# convert
+# convert_ned_enu
 # ---------------------------------------------------------------------------
 class TestConvert:
     def test_local_position_to_enu(self):
         msg = SimpleNamespace(xy_valid=True, z_valid=True, x=1.0, y=2.0, z=-3.0)
-        assert convert.local_position_enu(msg) == {"x": 2.0, "y": 1.0, "z": 3.0}
+        assert convert_ned_enu.local_position_enu(msg) == {"x": 2.0, "y": 1.0, "z": 3.0}
 
     def test_local_position_invalid(self):
         msg = SimpleNamespace(xy_valid=False, z_valid=True, x=1.0, y=2.0, z=-3.0)
-        assert convert.local_position_enu(msg) is None
+        assert convert_ned_enu.local_position_enu(msg) is None
 
     def test_heading_north_is_enu_pi_over_2(self):
-        assert close(convert.heading_enu(SimpleNamespace(heading=0.0)), math.pi / 2)
+        assert close(
+            convert_ned_enu.heading_enu(SimpleNamespace(heading=0.0)), math.pi / 2
+        )
 
     def test_heading_nan(self):
-        assert convert.heading_enu(SimpleNamespace(heading=float("nan"))) is None
+        assert (
+            convert_ned_enu.heading_enu(SimpleNamespace(heading=float("nan"))) is None
+        )
 
     def test_zero_quaternion_is_invalid(self):
-        assert convert.attitude_ned(SimpleNamespace(q=[0.0, 0.0, 0.0, 0.0])) is None
+        assert (
+            convert_ned_enu.attitude_ned(SimpleNamespace(q=[0.0, 0.0, 0.0, 0.0]))
+            is None
+        )
 
     def test_battery_unknown_remaining(self):
         msg = SimpleNamespace(voltage_v=15.2, current_a=3.0, remaining=-1.0)
-        assert convert.battery(msg)["percentage"] is None
+        assert convert_ned_enu.battery(msg)["percentage"] is None
 
     def test_global_position_alt_invalid(self):
         msg = SimpleNamespace(
             lat_lon_valid=True, alt_valid=False, lat=45.5, lon=-73.6, alt=30.0
         )
-        assert convert.global_position(msg) == {
+        assert convert_ned_enu.global_position(msg) == {
             "latitude": 45.5,
             "longitude": -73.6,
             "altitude": None,
