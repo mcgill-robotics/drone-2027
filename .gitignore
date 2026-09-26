@@ -10,10 +10,4 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Files written while running: screenshots, target registry, MediaMTX log
-runtime/
-
-# MediaMTX binary (download separately, see README)
-/mediamtx
-
 .DS_Store

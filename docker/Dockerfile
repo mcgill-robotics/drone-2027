@@ -23,20 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     build-essential \
     cmake \
-    ffmpeg \
     python3-pip \
     python3-colcon-common-extensions \
-    python3-flask \
-    python3-flask-cors \
-    python3-numpy \
-    python3-opencv \
     python3-pytest \
-    python3-scipy \
-    python3-serial \
-    python3-shapely \
-    python3-yaml \
     ros-humble-launch-ros \
-    ros-humble-sensor-msgs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,9 +37,6 @@ RUN git clone --depth 1 -b ${XRCE_AGENT_VERSION} https://github.com/eProsima/Mic
     && cmake --install /tmp/xrce-agent/build \
     && ldconfig /usr/local/lib \
     && rm -rf /tmp/xrce-agent
-
-# MediaMTX for camera streaming.
-COPY --from=bluenviron/mediamtx:1 /mediamtx /usr/local/bin/mediamtx
 
 USER $USERNAME
 WORKDIR /home/$USERNAME/drone-2027
