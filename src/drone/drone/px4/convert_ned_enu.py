@@ -1,11 +1,11 @@
 """
-Turn PX4 telemetry messages into the ENU dicts the rest of the code expects.
+Turns PX4's messages into simple Python dicts, converted to ENU.
 
-Each function takes a px4_msgs message (or anything with the same attribute
-names) and returns a plain dict, or None when PX4 marks the data invalid. The key
-names match drone-2026's getters so callers did not have to change.
+telemetry.py's getters use these. Each function takes one PX4 message and returns
+a dict like {"x": ..., "y": ..., "z": ...}, or None if PX4 says the data isn't
+valid right now (e.g. no GPS fix yet). The dict keys match drone-2026's getters.
 
-Pure Python: no ROS imports.
+No ROS imports, so the unit tests can run it anywhere (they pass in fake messages).
 """
 
 import math
@@ -18,11 +18,12 @@ from drone.px4.ned_enu_math_convert import (
 
 
 def _finite(*values):
+    """True if every value is a real number (not None, NaN or infinity)."""
     return all(v is not None and math.isfinite(float(v)) for v in values)
 
 
 def local_position_enu(msg):
-    """VehicleLocalPosition -> {"x": east, "y": north, "z": up} in metres."""
+    """PX4 position -> {"x": east, "y": north, "z": up} in metres, or None if invalid."""
     if not (msg.xy_valid and msg.z_valid) or not _finite(msg.x, msg.y, msg.z):
         return None
     x, y, z = ned_to_enu(float(msg.x), float(msg.y), float(msg.z))
@@ -30,7 +31,7 @@ def local_position_enu(msg):
 
 
 def local_velocity_enu(msg):
-    """VehicleLocalPosition -> {"x": east, "y": north, "z": up} in m/s."""
+    """PX4 velocity -> {"x": east, "y": north, "z": up} in m/s, or None if invalid."""
     if not (msg.v_xy_valid and msg.v_z_valid) or not _finite(msg.vx, msg.vy, msg.vz):
         return None
     x, y, z = ned_to_enu(float(msg.vx), float(msg.vy), float(msg.vz))
@@ -38,14 +39,14 @@ def local_velocity_enu(msg):
 
 
 def heading_enu(msg):
-    """VehicleLocalPosition.heading -> ENU yaw in radians (0 = facing East)."""
+    """PX4 heading -> our yaw in radians (0 = East, counter-clockwise), or None."""
     if not _finite(msg.heading):
         return None
     return yaw_ned_to_enu(float(msg.heading))
 
 
 def attitude_ned(msg):
-    """VehicleAttitude.q (w, x, y, z; FRD body -> NED) -> (roll, pitch, yaw) in radians."""
+    """PX4 attitude -> (roll, pitch, yaw) in radians, still in PX4's NED convention."""
     w, x, y, z = (float(v) for v in msg.q)
     if not _finite(w, x, y, z) or (w == 0.0 and x == 0.0 and y == 0.0 and z == 0.0):
         return None
@@ -53,7 +54,7 @@ def attitude_ned(msg):
 
 
 def global_position(msg):
-    """VehicleGlobalPosition -> {"latitude", "longitude", "altitude" (AMSL metres)}."""
+    """PX4 GPS position -> {"latitude", "longitude", "altitude" (m above sea level)}."""
     if not msg.lat_lon_valid:
         return None
     return {
@@ -64,7 +65,7 @@ def global_position(msg):
 
 
 def home_position(msg):
-    """HomePosition -> {"latitude", "longitude", "altitude" (AMSL metres)}."""
+    """PX4 home position -> {"latitude", "longitude", "altitude" (m above sea level)}."""
     if not msg.valid_hpos:
         return None
     return {
@@ -76,10 +77,10 @@ def home_position(msg):
 
 def battery(msg):
     """
-    BatteryStatus -> {"voltage", "current", "percentage", "remaining"}.
+    PX4 battery -> {"voltage", "current", "percentage", "remaining"}.
 
-    `percentage` and `remaining` are both the 0..1 fraction PX4 reports (None if
-    unknown), matching sensor_msgs/BatteryState.percentage that MAVROS gave us.
+    `percentage` and `remaining` are the same value: charge left as 0..1 (not
+    0..100), or None if unknown. Both keys exist because MAVROS used them.
     """
     remaining = float(msg.remaining) if msg.remaining >= 0.0 else None
     return {
@@ -91,7 +92,7 @@ def battery(msg):
 
 
 def gps_raw(msg):
-    """SensorGps -> the raw GPS dict drone-2026's get_gps_raw() returned."""
+    """PX4 raw GPS -> fix type, satellites, accuracy etc., as drone-2026's get_gps_raw() gave."""
     return {
         "fix_type": int(msg.fix_type),
         "lat": float(msg.latitude_deg),

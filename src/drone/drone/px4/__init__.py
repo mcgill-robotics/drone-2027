@@ -1,22 +1,26 @@
 """
-PX4 interface over the uXRCE-DDS bridge.
+Everything our code needs to talk to PX4, the autopilot on the flight controller.
+
+PX4 and ROS 2 are connected by MicroXRCEAgent, a separate program (see agent.py).
+Our side is one ROS 2 node, PX4Interface, that reads PX4's data and sends it orders.
 
 Modules in this package:
-  - interface:   Public PX4Interface node and background spin executor thread
-  - telemetry:   Subscribes to /fmu/out topics (GPS, battery, local pos, EKF)
-  - commands:    Publishes /fmu/in/vehicle_command and waits for command_ack
-  - offboard:    10 Hz background heartbeat thread and setpoint streaming
-  - ned_enu_math_convert: Coordinate conversion (Aviation NED <-> Robotics ENU)
-  - setpoints:   TrajectorySetpoint and OffboardControlMode packet builders
-  - modes:       PX4 flight mode command parameters and state translation
-  - qos:         PX4_QOS delivery contract (Best Effort + Transient Local)
-  - topics:      Dynamic topic versioning resolver (e.g. _v1 suffix in 1.17)
-  - agent:       MicroXRCEAgent process manager and CLI argument parsing
-  - actuators:   Maps Actuator Sets 1-6 via MAV_CMD_DO_SET_ACTUATOR (187)
-  - convert_ned_enu:      Decodes raw ROS message structs into clean Python dicts
+  - interface:            PX4Interface and init_px4() / shutdown_px4(). Start here.
+  - telemetry:            reads data from PX4 (position, battery, GPS, mode, ...)
+  - commands:             sends one-off commands (arm, change mode, land, servos)
+  - offboard:             sends "fly here" / "fly this fast" orders and keeps them going
+  - agent:                starts and stops MicroXRCEAgent; the --sitl/--udp/--serial flags
+  - convert_ned_enu:      turns PX4 messages into simple Python dicts, in ENU
+  - ned_enu_math_convert: the maths for switching between PX4's axes (NED) and ours (ENU)
+  - setpoints:            fills in the numbers for "fly here" / "fly this fast" orders
+  - modes:                translates mode names ("OFFBOARD", "LAND") to PX4's numbers
+  - actuators:            servo / pump output numbers for the payload, spray and gimbal
+  - qos:                  delivery rules every PX4 topic must use
+  - topics:               builds PX4 topic names like /fmu/out/vehicle_status_v1
 
-Import the pieces you need directly, e.g. `from drone.px4.interface import init_px4`.
-This file deliberately imports nothing: ned_enu_math_convert, topics, modes, setpoints,
-actuators, convert_ned_enu and agent are plain Python and must stay importable without ROS 2 (for unit
-tests and CI).
+Import what you need directly, e.g. `from drone.px4.interface import init_px4`.
+
+This file deliberately imports nothing. Most modules above are plain Python with no
+ROS 2 imports, so the unit tests can run on any laptop; importing interface here
+would pull in ROS 2 and break that.
 """

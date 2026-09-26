@@ -1,14 +1,17 @@
 """
-Commands to PX4: arming, mode changes, landing, peripheral outputs.
+One-off commands to PX4: arm, disarm, change mode, land, and payload/gimbal servos.
 
-drone-2026 sent these as MAVROS service calls. Over the uXRCE-DDS bridge a command
-is a VehicleCommand message on /fmu/in/vehicle_command, and PX4's answer (when it
-sends one) is a VehicleCommandAck on /fmu/out/vehicle_command_ack. send_command()
-publishes and then waits on a threading.Event that the ack callback sets; the
-callback runs on PX4Interface's executor thread, so nothing here spins.
+A command is a VehicleCommand message: a command number (see modes.py) plus up to
+7 numeric parameters. PX4 usually answers with a VehicleCommandAck ("ack") saying
+whether it accepted. drone-2026 did the same through MAVROS service calls.
 
-Some commands never get an ack: PX4 handles DO_SET_ACTUATOR and DO_MOUNT_CONTROL
-outside commander, and those modules do not reply. Those use publish_command().
+Two ways to send:
+  - send_command():    send, then wait for PX4's ack. Used for arm, mode changes, land.
+  - publish_command(): send and don't wait. Used for servo and gimbal commands,
+                       because PX4 never acks those.
+
+While send_command() waits, the ack arrives on the background thread from
+interface.py, which wakes the waiting code up.
 """
 
 import threading
@@ -20,9 +23,11 @@ from drone.px4 import actuators, modes
 from drone.px4.qos import PX4_QOS
 from drone.px4.topics import in_topic, out_topic
 
+# Which vehicle and which part of it the command is for. 1/1 = PX4 on our drone.
 TARGET_SYSTEM = 1
 TARGET_COMPONENT = 1
 
+# PX4's ack result numbers, as names for error messages.
 ACK_RESULT_NAMES = {
     0: "ACCEPTED",
     1: "TEMPORARILY_REJECTED",
@@ -35,9 +40,15 @@ ACK_RESULT_NAMES = {
 
 
 class CommandsMixin:
-    """Command publisher + ack handling. Expects a rclpy Node host with `namespace` and `_now_us()`."""
+    """
+    The one-off-commands part of PX4Interface.
+
+    Not used on its own: PX4Interface combines it with the other mixins, and it
+    relies on PX4Interface's `namespace` and `_now_us()`.
+    """
 
     def _init_commands(self):
+        """Set up the command publisher and the ack subscriber."""
         self._command_pub = self.create_publisher(
             VehicleCommand,
             in_topic(VehicleCommand, "vehicle_command", self.namespace),
@@ -50,12 +61,13 @@ class CommandsMixin:
             PX4_QOS,
         )
         self._ack_lock = threading.Lock()
-        self._ack_waiters = {}  # command id -> [threading.Event, result]
+        # Commands waiting for an ack: command number -> [event to wake the waiter, result]
+        self._ack_waiters = {}
         self._small_motor_active = False
         self._check_command_ids()
 
     def _check_command_ids(self):
-        """Warn if px4_msgs disagrees with the command numbers hard-coded in drone.px4.modes."""
+        """Warn if the command numbers in modes.py don't match the installed px4_msgs."""
         expected = {
             "VEHICLE_CMD_COMPONENT_ARM_DISARM": modes.VEHICLE_CMD_COMPONENT_ARM_DISARM,
             "VEHICLE_CMD_DO_SET_MODE": modes.VEHICLE_CMD_DO_SET_MODE,
@@ -76,6 +88,7 @@ class CommandsMixin:
     # =========================================================
 
     def _build_command(self, command, params):
+        """Fill in a VehicleCommand message. Missing params are padded with 0."""
         values = [float(p) for p in params]
         if len(values) > 7:
             raise ValueError("VehicleCommand has at most 7 params")
@@ -100,15 +113,15 @@ class CommandsMixin:
         return msg
 
     def publish_command(self, command, params=()):
-        """Send a command without waiting for a reply (for commands PX4 never acknowledges)."""
+        """Send a command and return straight away. For commands PX4 never answers."""
         self._command_pub.publish(self._build_command(command, params))
 
     def send_command(self, command, params=(), timeout=3.0):
         """
-        Send a command and wait for PX4's VehicleCommandAck.
+        Send a command and wait for PX4's answer.
 
-        Returns the ack result (VehicleCommandAck.VEHICLE_CMD_RESULT_ACCEPTED == 0 means
-        accepted) or None if no ack arrived within `timeout` seconds.
+        Returns PX4's result number: 0 means accepted, anything else is a rejection
+        (see ACK_RESULT_NAMES). Returns None if PX4 didn't answer within `timeout`.
         """
         command = int(command)
         waiter = [threading.Event(), None]
@@ -124,16 +137,18 @@ class CommandsMixin:
                     del self._ack_waiters[command]
 
     def _ack_callback(self, msg):
+        """Runs when an ack arrives: hand the result to whoever is waiting for it."""
         with self._ack_lock:
             waiter = self._ack_waiters.get(int(msg.command))
         if waiter is None:
             return
         if msg.result == VehicleCommandAck.VEHICLE_CMD_RESULT_IN_PROGRESS:
-            return  # a final result will follow
+            return  # "still working on it"; the real answer comes later
         waiter[1] = int(msg.result)
         waiter[0].set()
 
     def _command_ok(self, label, result):
+        """True if `result` means accepted; otherwise print why not."""
         if result == VehicleCommandAck.VEHICLE_CMD_RESULT_ACCEPTED:
             return True
         if result is None:
@@ -145,6 +160,7 @@ class CommandsMixin:
         return False
 
     def _wait_until(self, predicate, timeout):
+        """Check predicate() every 0.1 s until it is True (return True) or time runs out."""
         start = time.time()
         while (time.time() - start) < timeout:
             if predicate():
@@ -157,7 +173,12 @@ class CommandsMixin:
     # =========================================================
 
     def arm_vehicle(self, timeout=20):
-        """Arm the vehicle (allow motors to spin). Race day arms from the RC switch instead; see docs/arming.md."""
+        """
+        Arm the motors from code, and wait until PX4 reports armed.
+
+        On the real drone the pilot arms with the RC switch instead (docs/arming.md);
+        this is for the simulator and props-off bench tests.
+        """
         if not self.connected:
             print("[PX4] Not connected to PX4, cannot arm")
             return False
@@ -178,6 +199,7 @@ class CommandsMixin:
         return False
 
     def disarm_vehicle(self, timeout=20):
+        """Disarm the motors, and wait until PX4 reports disarmed."""
         if not self.connected:
             print("[PX4] Not connected to PX4, cannot disarm")
             return False
@@ -199,11 +221,14 @@ class CommandsMixin:
 
     def change_mode(self, mode_name, timeout=10):
         """
-        Ask PX4 to switch flight mode ("OFFBOARD", "POSCTL", "HOLD", "RTL", "LAND", ...).
+        Ask PX4 to switch flight mode, e.g. "OFFBOARD", "POSCTL", "HOLD", "RTL", "LAND".
 
-        Returns True when PX4 accepts the command. Use wait_for_mode() to confirm the
-        mode actually became active. OFFBOARD needs setpoints already flowing, so
-        they are primed here if the background heartbeat is not running.
+        Returns True if PX4 accepts the request. Call wait_for_mode() afterwards to
+        confirm it really switched.
+
+        PX4 refuses OFFBOARD unless "fly here" orders are already arriving, so for
+        OFFBOARD this first sends a burst of "stay still" orders (unless the
+        heartbeat thread from offboard.py is already sending them).
         """
         if not self.connected:
             print("[PX4] Not connected to PX4, cannot change mode")
@@ -225,7 +250,11 @@ class CommandsMixin:
         return False
 
     def land(self, timeout=60):
-        """Land with PX4's own landing mode; PX4 owns descent and touchdown detection."""
+        """
+        Switch to PX4's LAND mode and wait until the drone is on the ground.
+
+        PX4 flies the descent and detects touchdown itself.
+        """
         if not self.connected:
             print("[PX4] Not connected to PX4, cannot land")
             return False
@@ -256,15 +285,15 @@ class CommandsMixin:
         return False
 
     # =========================================================
-    # Peripheral outputs (actuator sets; see drone.px4.actuators)
+    # Payload, spray and gimbal servos (see actuators.py)
     # =========================================================
 
     def _send_actuator_command(self, actuator_slot, actuator_value):
         """
-        Set one "Peripheral via Actuator Set" output to a value in -1..1.
+        Set one servo/pump output (actuator set 1-6) to a value from -1 to 1.
 
-        PX4 does not acknowledge DO_SET_ACTUATOR, so True only means the command was
-        published, not that the output moved.
+        PX4 never answers this command, so True only means it was sent, not that
+        the servo actually moved.
         """
         if not self.connected:
             print("[PX4] Not connected to PX4, cannot send actuator command")
@@ -278,12 +307,14 @@ class CommandsMixin:
         return True
 
     def activate_spray(self, actuator_slot=actuators.SPRAY, actuator_value=1.0):
+        """Turn the spray pump on."""
         print(
             f"[PX4] Activating spray pump on actuator set {actuator_slot} (value: {actuator_value})"
         )
         return self._send_actuator_command(actuator_slot, actuator_value)
 
     def deactivate_spray(self, actuator_slot=actuators.SPRAY, actuator_value=0.0):
+        """Turn the spray pump off."""
         print(f"[PX4] Deactivating spray pump on actuator set {actuator_slot}")
         return self._send_actuator_command(actuator_slot, actuator_value)
 
@@ -294,7 +325,7 @@ class CommandsMixin:
         neutral_pwm=1500,
         pulse_seconds=0.5,
     ):
-        """One-shot pulse on the payload servos, then back to neutral."""
+        """Drop the payload: move the payload servos to release, wait, then back to neutral."""
         release_value = actuators.pwm_to_actuator(release_pwm)
         neutral_value = actuators.pwm_to_actuator(neutral_pwm)
         print(
@@ -321,6 +352,7 @@ class CommandsMixin:
         neutral_pwm=1500,
         pulse_seconds=0.5,
     ):
+        """Same as release_payload(), but for the small payload servo."""
         return self.release_payload(
             slots=(slot,),
             release_pwm=release_pwm,
@@ -329,6 +361,7 @@ class CommandsMixin:
         )
 
     def start_small_motor(self, slot=actuators.SMALL_PAYLOAD, pwm_value=1900):
+        """Turn the small motor on (it shares the small payload output)."""
         print(
             f"[PX4] Starting small motor on actuator set {slot} (PWM-equivalent: {pwm_value})"
         )
@@ -338,6 +371,7 @@ class CommandsMixin:
         return False
 
     def stop_small_motor(self, slot=actuators.SMALL_PAYLOAD, neutral_pwm=1500):
+        """Turn the small motor off."""
         print(f"[PX4] Stopping small motor on actuator set {slot}")
         if self._send_actuator_command(slot, actuators.pwm_to_actuator(neutral_pwm)):
             self._small_motor_active = False
@@ -347,6 +381,7 @@ class CommandsMixin:
     def toggle_small_motor(
         self, slot=actuators.SMALL_PAYLOAD, pwm_on=1900, neutral_pwm=1500
     ):
+        """Turn the small motor on if it is off, or off if it is on."""
         if self._small_motor_active:
             return self.stop_small_motor(slot=slot, neutral_pwm=neutral_pwm)
         return self.start_small_motor(slot=slot, pwm_value=pwm_on)
@@ -358,7 +393,11 @@ class CommandsMixin:
         yaw_slot=actuators.GIMBAL_YAW,
         pitch_slot=actuators.GIMBAL_PITCH,
     ):
-        """Drive the two gimbal servos. PWM-style inputs (1500 = centre) are mapped onto -1..1."""
+        """
+        Point the gimbal by setting its two servos.
+
+        Values are PWM-style: 1500 = centre, 1000 and 2000 = the two ends.
+        """
         print(
             f"[PX4] Setting gimbal: yaw_set={yaw_slot} pwm={yaw_pwm}, pitch_set={pitch_slot} pwm={pitch_pwm}"
         )
@@ -376,6 +415,7 @@ class CommandsMixin:
         pitch_slot=actuators.GIMBAL_PITCH,
         neutral_pwm=1500,
     ):
+        """Point the gimbal straight ahead (both servos centred)."""
         return self.set_gimbal(
             yaw_pwm=neutral_pwm,
             pitch_pwm=neutral_pwm,
@@ -385,15 +425,15 @@ class CommandsMixin:
 
     def set_gimbal_angles(self, pitch_deg=0.0, roll_deg=0.0, yaw_deg=0.0):
         """
-        MAV_CMD_DO_MOUNT_CONTROL for a gimbal driven by PX4's gimbal module.
+        Point the gimbal by angle, in degrees.
 
-        Only useful if PX4's gimbal driver owns the gimbal outputs; the actuator-set
-        gimbal goes through set_gimbal(). No ack is sent for this command.
+        Only works if the gimbal is set up in PX4 as a gimbal. Our gimbal is wired
+        as two plain servos, so use set_gimbal() instead. PX4 never answers this.
         """
         if not self.connected:
             print("[PX4] Not connected to PX4, cannot set gimbal")
             return False
-        # param7 = 2: MAV_MOUNT_MODE_MAVLINK_TARGETING
+        # param7 = 2 means "point at the angles given here"
         params = (float(pitch_deg), float(roll_deg), float(yaw_deg), 0.0, 0.0, 0.0, 2.0)
         self.publish_command(modes.VEHICLE_CMD_DO_MOUNT_CONTROL, params)
         print(

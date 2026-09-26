@@ -1,29 +1,32 @@
 """
-PX4 uXRCE-DDS topic names.
+Builds the names of PX4's ROS 2 topics.
 
-PX4 publishes on /fmu/out/<name> and listens on /fmu/in/<name>. Since PX4 v1.16,
-a message whose definition has MESSAGE_VERSION > 0 gets a "_v<N>" suffix, e.g.
-VehicleStatus v1 -> /fmu/out/vehicle_status_v1. Reading the version from the
-message class keeps these names right when px4_msgs moves to a newer release.
+PX4 sends data on /fmu/out/<name> and listens for orders on /fmu/in/<name>.
+Since PX4 1.16, some messages have a version number added to the name, e.g.
+/fmu/out/vehicle_status_v1. These functions read that version from the message
+type itself, so the names stay right when px4_msgs is updated.
+
+A wrong topic name gives no error, just no data, so always build names here.
 """
 
 
 def versioned_name(msg_type, base_name):
-    """Append "_v<N>" when the message type declares MESSAGE_VERSION > 0."""
+    """Add "_v<N>" to the name if the message type has a version, e.g. "vehicle_status_v1"."""
     version = int(getattr(msg_type, "MESSAGE_VERSION", 0))
     return f"{base_name}_v{version}" if version > 0 else base_name
 
 
 def _prefix(namespace):
+    """ "drone1" -> "/drone1"; "" -> "". Only needed when running several drones."""
     namespace = (namespace or "").strip("/")
     return f"/{namespace}" if namespace else ""
 
 
 def out_topic(msg_type, base_name, namespace=""):
-    """Topic PX4 publishes on (PX4 -> ROS)."""
+    """Name of a topic PX4 sends data on, e.g. /fmu/out/vehicle_status_v1."""
     return f"{_prefix(namespace)}/fmu/out/{versioned_name(msg_type, base_name)}"
 
 
 def in_topic(msg_type, base_name, namespace=""):
-    """Topic PX4 subscribes to (ROS -> PX4)."""
+    """Name of a topic PX4 listens for orders on, e.g. /fmu/in/vehicle_command."""
     return f"{_prefix(namespace)}/fmu/in/{versioned_name(msg_type, base_name)}"

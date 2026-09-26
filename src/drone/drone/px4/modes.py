@@ -1,16 +1,22 @@
 """
-PX4 flight modes: VehicleStatus.nav_state <-> names, and the command that selects each mode.
+PX4 doesn't understand words like "OFFBOARD" or "LAND".
+It only understands numbers. modes.py is a translator between names and PX4's numbers.
 
-Mode names follow the strings MAVROS used ("OFFBOARD", "POSCTL", "AUTO.RTL", ...)
-so comparisons like `px4.get_mode() == "OFFBOARD"` read the same as before.
-Short aliases such as "RTL", "HOLD" and "LAND" are accepted when changing mode.
+  - Changing mode: mode_command("LAND") gives the command numbers to send to PX4.
+  - Reading mode:  nav_state_names() lets get_mode() turn PX4's mode number back
+                   into a name like "OFFBOARD".
+  - Nicknames:     normalize_mode_name() makes "land", "LAND" and "auto_land" all
+                   mean the same thing, and "HOLD" mean PX4's "AUTO.LOITER".
 
-Pure Python: no ROS imports, so it can be unit tested anywhere.
+Names match the ones MAVROS used, so `px4.get_mode() == "OFFBOARD"` still works.
+Also holds the command numbers for arm, land, etc. that commands.py sends.
+
+No ROS imports, so the unit tests can check every translation on any laptop.
 """
 
 import math
 
-# VehicleCommand ids, checked against px4_msgs release/1.17 VehicleCommand.msg.
+# PX4's command numbers (checked against px4_msgs release/1.17 VehicleCommand.msg).
 VEHICLE_CMD_NAV_RETURN_TO_LAUNCH = 20
 VEHICLE_CMD_NAV_LAND = 21
 VEHICLE_CMD_DO_SET_MODE = 176
@@ -18,10 +24,10 @@ VEHICLE_CMD_DO_SET_ACTUATOR = 187
 VEHICLE_CMD_DO_MOUNT_CONTROL = 205
 VEHICLE_CMD_COMPONENT_ARM_DISARM = 400
 
-# DO_SET_MODE param1: MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, i.e. "param2/param3 are PX4 modes".
+# First parameter of a set-mode command: 1 means "the next two numbers are a PX4 mode".
 CUSTOM_MODE_ENABLED = 1.0
 
-# PX4 custom (main mode, sub mode) pairs for DO_SET_MODE param2/param3.
+# Each mode name -> PX4's (main mode, sub mode) numbers. AUTO modes share main mode 4.
 _SET_MODE_TARGETS = {
     "MANUAL": (1.0, 0.0),
     "ALTCTL": (2.0, 0.0),
@@ -34,6 +40,7 @@ _SET_MODE_TARGETS = {
     "AUTO.MISSION": (4.0, 4.0),
 }
 
+# Nicknames -> PX4's real mode name.
 _ALIASES = {
     "HOLD": "AUTO.LOITER",
     "LOITER": "AUTO.LOITER",
@@ -48,18 +55,18 @@ _ALIASES = {
 
 
 def normalize_mode_name(name):
-    """ "auto_rtl" / "AUTO.RTL" / "rtl" -> "AUTO.RTL"."""
+    """Tidy a mode name: "auto_rtl", "AUTO.RTL" and "rtl" all become "AUTO.RTL"."""
     key = str(name).strip().upper().replace("_", ".")
     return _ALIASES.get(key, key)
 
 
 def mode_command(name):
     """
-    Return (command_id, params) that asks PX4 to enter `name`.
+    The command to send to PX4 to switch to mode `name`, as (command number, 7 params).
 
-    params is a tuple for param1..param7. RTL and LAND use their dedicated NAV
-    commands with NaN position/yaw ("use the current one"); every other mode
-    goes through DO_SET_MODE. Raises ValueError for unknown names.
+    RTL and LAND have their own commands (NaN in the params means "from where you
+    are now"); every other mode uses the general set-mode command (176).
+    Raises ValueError for a name PX4 doesn't have.
     """
     key = normalize_mode_name(name)
     nan = math.nan
@@ -83,10 +90,10 @@ def mode_command(name):
 
 def nav_state_names(status_type):
     """
-    Build {nav_state value: mode name} from a VehicleStatus class's NAVIGATION_STATE_* constants.
+    Build the table from PX4's mode numbers to names, e.g. {14: "OFFBOARD", ...}.
 
-    Reading the constants from the message class (instead of copying numbers)
-    keeps this right if a newer px4_msgs adds or renumbers states.
+    Reads the numbers from the VehicleStatus message type instead of typing them
+    in, so the table stays right if a newer px4_msgs renumbers the modes.
     """
     attrs = set(dir(status_type)) | set(dir(type(status_type)))
     names = {}

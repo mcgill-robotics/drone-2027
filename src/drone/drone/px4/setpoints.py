@@ -1,11 +1,12 @@
 """
-Field values for PX4 offboard messages, built from ENU inputs.
+Fills in the numbers for "fly here" and "fly this fast" orders (see offboard.py).
 
-OffboardControlMode says which kind of control we are doing and doubles as the
-"companion computer is alive" heartbeat. TrajectorySetpoint carries the numbers
-in NED; NaN means "do not control this value".
+You give ENU values (x East, y North, z Up); these functions convert them to NED,
+which is what PX4 expects. Any field set to NaN means "PX4, don't control this":
+a position order leaves velocity as NaN, and a velocity order leaves position as NaN.
 
-Pure Python: returns plain dicts that offboard.py copies onto the ROS messages.
+Returns plain dicts; offboard.py copies them onto the real ROS messages. No ROS
+imports, so the unit tests can run it anywhere.
 """
 
 import math
@@ -17,15 +18,20 @@ from drone.px4.ned_enu_math_convert import (
 )
 
 NAN = math.nan
-CONTROL_KINDS = ("position", "velocity")
+CONTROL_KINDS = ("position", "velocity")  # the two kinds of order we support
 
 
 def _nan3():
+    """[NaN, NaN, NaN]: "don't control" for all three axes."""
     return [NAN, NAN, NAN]
 
 
 def position_setpoint(x, y, z, yaw=None):
-    """ENU position in metres and ENU yaw in radians (None = leave yaw alone) -> TrajectorySetpoint fields."""
+    """
+    Fields for "fly to (x, y, z) facing `yaw`".
+
+    x, y, z in metres (ENU); yaw in radians (0 = East), or None to not control it.
+    """
     return {
         "position": list(enu_to_ned(float(x), float(y), float(z))),
         "velocity": _nan3(),
@@ -36,7 +42,11 @@ def position_setpoint(x, y, z, yaw=None):
 
 
 def velocity_setpoint(vx, vy, vz, yaw_rate=0.0):
-    """ENU velocity in m/s and ENU yaw rate in rad/s -> TrajectorySetpoint fields."""
+    """
+    Fields for "fly at (vx, vy, vz), turning at `yaw_rate`".
+
+    vx, vy, vz in m/s (ENU); yaw_rate in rad/s, positive = counter-clockwise.
+    """
     return {
         "position": _nan3(),
         "velocity": list(enu_to_ned(float(vx), float(vy), float(vz))),
@@ -47,7 +57,7 @@ def velocity_setpoint(vx, vy, vz, yaw_rate=0.0):
 
 
 def control_mode_flags(kind):
-    """OffboardControlMode fields for a "position" or "velocity" setpoint."""
+    """Fields for OffboardControlMode: tells PX4 whether this is a position or velocity order."""
     if kind not in CONTROL_KINDS:
         raise ValueError(f"Unsupported offboard control kind {kind!r}")
     return {

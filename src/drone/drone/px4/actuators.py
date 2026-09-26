@@ -1,19 +1,20 @@
 """
-Peripheral outputs driven with MAV_CMD_DO_SET_ACTUATOR (VehicleCommand 187).
+Numbers for controlling the extra servos and pump (payload, spray, gimbal).
 
-PX4 offers six "Peripheral via Actuator Set" output functions. In QGroundControl
-(Actuators tab) each physical output is assigned one of them; the mapping this
-code expects is documented in docs/actuators.md. Values run from -1 to 1 and PX4
-maps them onto the output's configured min/max PWM.
+PX4 has six spare outputs for this, called "actuator sets" 1-6. In QGroundControl
+(Actuators tab) each physical output pin is assigned one of them; which pin is
+which is in docs/actuators.md. We set an output to a value from -1 to 1, and PX4
+turns that into the pin's PWM signal.
 
-drone-2026 drove the payload and gimbal servos with MAV_CMD_DO_SET_SERVO (183),
-which PX4 1.16 does not support, so every peripheral now uses an actuator set.
+drone-2026 used a different command (DO_SET_SERVO) that PX4 1.16+ doesn't support,
+so everything now goes through actuator sets (command 187, DO_SET_ACTUATOR).
 
-Pure Python: no ROS imports.
+No ROS imports, so the unit tests can run it anywhere.
 """
 
 import math
 
+# Which actuator set drives what (must match QGroundControl; see docs/actuators.md)
 SPRAY = 1
 PAYLOAD_A = 2
 PAYLOAD_B = 3
@@ -22,25 +23,27 @@ GIMBAL_YAW = 5
 GIMBAL_PITCH = 6
 NUM_SETS = 6
 
+# Servo PWM runs 1000-2000 microseconds, with 1500 as the centre
 PWM_CENTER = 1500.0
 PWM_HALF_RANGE = 500.0
 
 
 def clamp_unit(value):
+    """Limit a value to -1..1."""
     return max(-1.0, min(1.0, float(value)))
 
 
 def pwm_to_actuator(pwm, center=PWM_CENTER, half_range=PWM_HALF_RANGE):
-    """Map a PWM-style number (1000..2000, 1500 = neutral) onto an actuator value (-1..1)."""
+    """PWM-style number -> actuator value, e.g. 1000 -> -1, 1500 -> 0, 2000 -> 1."""
     return clamp_unit((float(pwm) - center) / half_range)
 
 
 def actuator_command_params(slot, value):
     """
-    param1..param7 for DO_SET_ACTUATOR that set one actuator set and leave the others alone.
+    The 7 command parameters that set actuator set `slot` (1-6) to `value`.
 
-    `slot` is 1-based (Actuator Set 1..6). Untouched sets are NaN, which PX4 reads
-    as "no change". param7 selects the first group of six sets.
+    The other five sets are sent as NaN, which PX4 reads as "leave unchanged".
+    The 7th parameter picks the group of sets; 0 = sets 1-6.
     """
     index = int(slot) - 1
     if not 0 <= index < NUM_SETS:

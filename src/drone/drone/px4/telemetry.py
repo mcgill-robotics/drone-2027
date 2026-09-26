@@ -1,10 +1,17 @@
 """
-Telemetry from PX4: subscriptions and getters.
+Reading data from PX4: position, attitude, GPS, battery, mode, armed state.
 
-Replaces drone-2026's px4_getters.py. Callbacks only store the newest message and
-when it arrived; getters convert on demand and return ENU dicts with the same keys
-as before. Callbacks run on PX4Interface's executor thread, getters on the caller's
-thread, so there is never a reason for callers to spin.
+Replaces drone-2026's px4_getters.py, and the getters return the same dict keys.
+
+How it works:
+  1. We subscribe to each PX4 topic in TELEMETRY_STREAMS.
+  2. Whenever a message arrives, a small callback saves it in self._latest.
+     This happens on the background thread from interface.py.
+  3. When your code calls a getter such as get_location(), it takes the saved
+     message and converts it to a simple ENU dict (see convert_ned_enu.py).
+
+So getters never wait: they return whatever arrived most recently, or None if
+nothing has arrived yet.
 """
 
 import time
@@ -26,11 +33,12 @@ from drone.px4.modes import nav_state_names, normalize_mode_name
 from drone.px4.qos import PX4_QOS
 from drone.px4.topics import out_topic
 
-# If no vehicle_status arrives for this long, treat the link to PX4 as down.
+# If PX4's status message has not arrived for this many seconds, treat PX4 as disconnected.
 # Tune after measuring `ros2 topic hz` on the status topic in SITL and on the drone.
 CONNECTION_TIMEOUT_S = 2.0
 
-# (key, message type, topic base name). Every one of these is in PX4 1.17's dds_topics.yaml.
+# Every PX4 topic we listen to, as (name we store it under, message type, topic name).
+# PX4 only sends topics listed in its dds_topics.yaml; all of these are in PX4 1.17's.
 TELEMETRY_STREAMS = (
     ("status", VehicleStatus, "vehicle_status"),
     ("local_position", VehicleLocalPosition, "vehicle_local_position"),
@@ -44,12 +52,20 @@ TELEMETRY_STREAMS = (
 
 
 class TelemetryMixin:
-    """Subscriptions + getters. Expects the host class to be a rclpy Node with `namespace` set."""
+    """
+    The reading-data part of PX4Interface.
+
+    Not used on its own: PX4Interface combines it with the other mixins, and it
+    relies on PX4Interface being a ROS node with `namespace` set.
+    """
 
     def _init_telemetry(self):
-        self._latest = {key: None for key, _, _ in TELEMETRY_STREAMS}
-        self._received_at = {key: None for key, _, _ in TELEMETRY_STREAMS}
-        self._nav_state_names = nav_state_names(VehicleStatus)
+        """Subscribe to every topic in TELEMETRY_STREAMS."""
+        self._latest = {key: None for key, _, _ in TELEMETRY_STREAMS}  # newest message
+        self._received_at = {
+            key: None for key, _, _ in TELEMETRY_STREAMS
+        }  # when it came
+        self._nav_state_names = nav_state_names(VehicleStatus)  # mode number -> name
         self._telemetry_subs = []
 
         for key, msg_type, base_name in TELEMETRY_STREAMS:
@@ -61,6 +77,8 @@ class TelemetryMixin:
             print(f"[PX4] Subscribed to {topic}")
 
     def _make_store_callback(self, key):
+        """Make the callback for one topic: it just saves the message and the time."""
+
         def _store(msg):
             if self._latest[key] is None:
                 print(f"[PX4] Receiving {key}")
@@ -75,7 +93,11 @@ class TelemetryMixin:
 
     @property
     def connected(self):
-        """True while vehicle_status keeps arriving. Replaces MAVROS's State.connected."""
+        """
+        True if PX4's status message arrived in the last CONNECTION_TIMEOUT_S seconds.
+
+        Replaces MAVROS's State.connected.
+        """
         received = self._received_at["status"]
         return (
             received is not None
@@ -83,7 +105,7 @@ class TelemetryMixin:
         )
 
     def wait_for_connection(self, timeout=30.0):
-        """Block until PX4 telemetry arrives through the agent."""
+        """Wait until PX4's status message arrives. Returns False after `timeout` seconds."""
         start = time.monotonic()
         while (time.monotonic() - start) < timeout:
             if self.connected:
@@ -96,6 +118,7 @@ class TelemetryMixin:
         return False
 
     def connect(self, timeout=30.0):
+        """Same as wait_for_connection()."""
         return self.wait_for_connection(timeout)
 
     # =========================================================
@@ -103,13 +126,14 @@ class TelemetryMixin:
     # =========================================================
 
     def is_armed(self):
+        """True if the motors are armed. False if not, or if PX4 is disconnected."""
         status = self._latest["status"]
         if not self.connected or status is None:
             return False
         return status.arming_state == VehicleStatus.ARMING_STATE_ARMED
 
     def get_mode(self):
-        """Current flight mode as a MAVROS-style name ("OFFBOARD", "POSCTL", "AUTO.RTL", ...) or None."""
+        """Current flight mode as a name, e.g. "OFFBOARD", "POSCTL", "AUTO.RTL". None if unknown."""
         status = self._latest["status"]
         if status is None:
             return None
@@ -117,7 +141,12 @@ class TelemetryMixin:
         return self._nav_state_names.get(nav_state, f"UNKNOWN({nav_state})")
 
     def wait_for_mode(self, mode, timeout=5.0):
-        """Block until PX4 reports `mode` as active (a command being accepted is not enough)."""
+        """
+        Wait until PX4 reports it is actually in `mode`. Returns False after `timeout`.
+
+        Use this after change_mode(): PX4 accepting the request does not always mean
+        it switched.
+        """
         target = normalize_mode_name(mode)
         start = time.monotonic()
         while (time.monotonic() - start) < timeout:
@@ -130,29 +159,40 @@ class TelemetryMixin:
         return False
 
     def is_landed(self):
+        """True if PX4 detects the drone is on the ground."""
         land = self._latest["land_detected"]
         return bool(land.landed) if land is not None else False
 
     # =========================================================
-    # Position, velocity, attitude (ENU unless the name says NED)
+    # Position, velocity, attitude
+    # All ENU (x East, y North, z Up) unless the method name says NED.
     # =========================================================
 
     def get_location(self):
-        """Local position {"x": east, "y": north, "z": up} in metres, or None."""
+        """
+        Position {"x": east, "y": north, "z": up} in metres, or None.
+
+        Measured from PX4's local origin, which is roughly where PX4 started up.
+        """
         msg = self._latest["local_position"]
         return convert_ned_enu.local_position_enu(msg) if msg is not None else None
 
     def get_altitude(self):
+        """Height above the local origin in metres (0 if unknown)."""
         loc = self.get_location()
         return loc["z"] if loc else 0
 
     def get_velocity(self):
-        """Local velocity {"x": east, "y": north, "z": up} in m/s, or None."""
+        """Velocity {"x": east, "y": north, "z": up} in m/s, or None."""
         msg = self._latest["local_position"]
         return convert_ned_enu.local_velocity_enu(msg) if msg is not None else None
 
     def get_current_yaw(self):
-        """ENU yaw in radians (0 = facing East, counter-clockwise positive). 0.0 if unknown."""
+        """
+        Which way the nose points, in radians: 0 = East, pi/2 = North (counter-clockwise).
+
+        Returns 0.0 if unknown.
+        """
         msg = self._latest["local_position"]
         yaw = convert_ned_enu.heading_enu(msg) if msg is not None else None
         if yaw is None:
@@ -161,16 +201,17 @@ class TelemetryMixin:
         return yaw if yaw is not None else 0.0
 
     def get_attitude_ned(self):
-        """(roll, pitch, yaw) in radians, FRD body relative to NED, or None."""
+        """(roll, pitch, yaw) in radians in PX4's own convention (NED), or None."""
         msg = self._latest["attitude"]
         return convert_ned_enu.attitude_ned(msg) if msg is not None else None
 
     def get_attitude_enu(self):
-        """(roll, pitch, yaw) in radians, FLU body relative to ENU, or None."""
+        """(roll, pitch, yaw) in radians in our convention (ENU), or None."""
         ned = self.get_attitude_ned()
         return euler_ned_to_enu(*ned) if ned else None
 
     def get_pose(self):
+        """Position and attitude together in one dict, or None if neither is known."""
         position = self.get_location()
         attitude = self.get_attitude_enu()
         if position is None and attitude is None:
@@ -189,22 +230,33 @@ class TelemetryMixin:
     # =========================================================
 
     def get_gps_location(self):
-        """Fused global position {"latitude", "longitude", "altitude" (AMSL m)} or None."""
+        """
+        GPS position {"latitude", "longitude", "altitude"}, or None.
+
+        This is PX4's best estimate, combining GPS with its other sensors.
+        Altitude is metres above sea level.
+        """
         msg = self._latest["global_position"]
         return convert_ned_enu.global_position(msg) if msg is not None else None
 
     def get_gps_raw(self, gps_id=1):
-        """Raw receiver data. PX4 bridges one GPS (vehicle_gps_position), so gps_id 2 returns None."""
+        """
+        Raw data straight from the GPS receiver (fix type, satellites, accuracy).
+
+        PX4 only sends one GPS, so gps_id=2 always returns None.
+        """
         msg = self._latest["gps"]
         if gps_id != 1 or msg is None:
             return None
         return convert_ned_enu.gps_raw(msg)
 
     def get_home_location(self):
+        """Where PX4 set home (usually where it armed), as latitude/longitude/altitude."""
         msg = self._latest["home"]
         return convert_ned_enu.home_position(msg) if msg is not None else None
 
     def get_battery_status(self):
+        """{"voltage", "current", "percentage", "remaining"}, or None."""
         msg = self._latest["battery"]
         return convert_ned_enu.battery(msg) if msg is not None else None
 
@@ -213,6 +265,7 @@ class TelemetryMixin:
     # =========================================================
 
     def get_full_telemetry_snapshot(self):
+        """Every getter's result in one dict, for printing or logging."""
         return {
             "status": {
                 "connected": self.connected,
@@ -230,6 +283,7 @@ class TelemetryMixin:
         }
 
     def print_telemetry_summary(self):
+        """Print the current state, position, velocity and GPS in a readable block."""
         snapshot = self.get_full_telemetry_snapshot()
         status = snapshot["status"]
         print("=" * 60)
@@ -272,7 +326,12 @@ class TelemetryMixin:
         print("=" * 60)
 
     def print_telemetry_health(self, stale_after_sec=2.0):
-        """Which PX4 topics are arriving. Wrong topic names or QoS fail silently, so check this first."""
+        """
+        Print which PX4 topics are arriving and how fresh they are.
+
+        A wrong topic name or QoS gives no error, just no data, so check this first
+        when a getter keeps returning None.
+        """
         now = time.monotonic()
         print("=" * 60)
         print("[PX4] Telemetry Health Check")
